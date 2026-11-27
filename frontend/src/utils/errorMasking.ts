@@ -58,9 +58,11 @@ export function maskErrorMessage(error: unknown, fallback?: string): string {
     normalized.includes('network request failed') ||
     normalized.includes('load failed') ||
     normalized.includes('econnrefused') ||
+    normalized.includes('econnaborted') ||
+    normalized.includes('timeout') ||
     normalized.includes('enotfound')
   ) {
-    return 'Network error. Please check your internet connection and try again.';
+    return 'Network error occurred while contacting AI models.';
   }
 
   if (

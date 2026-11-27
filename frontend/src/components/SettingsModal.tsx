@@ -1,26 +1,22 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { CheckCircle2, Eye, EyeOff, KeyRound, ShieldCheck, X } from 'lucide-react';
 import { useGlobalError } from './GlobalErrorState';
+import {
+  API_STORAGE_KEYS,
+  loadStoredApiSettings,
+} from '../utils/storage';
 
 export interface ApiKeysConfig {
   sarvamApiKey: string;
   geminiApiKey: string;
 }
 
-const STORAGE_KEYS = {
-  sarvam: 'arzi_bol_sarvam_api_key',
-  gemini: 'arzi_bol_gemini_api_key',
-} as const;
-
 export function loadStoredApiKeys(): ApiKeysConfig {
-  try {
-    return {
-      sarvamApiKey: window.localStorage.getItem(STORAGE_KEYS.sarvam) ?? '',
-      geminiApiKey: window.localStorage.getItem(STORAGE_KEYS.gemini) ?? '',
-    };
-  } catch {
-    return { sarvamApiKey: '', geminiApiKey: '' };
-  }
+  const { sarvamKey, geminiKey } = loadStoredApiSettings();
+  return {
+    sarvamApiKey: sarvamKey,
+    geminiApiKey: geminiKey,
+  };
 }
 
 interface SettingsModalProps {
@@ -67,15 +63,15 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
 
     try {
       if (trimmedSarvam) {
-        window.localStorage.setItem(STORAGE_KEYS.sarvam, trimmedSarvam);
+        window.localStorage.setItem(API_STORAGE_KEYS.sarvam, trimmedSarvam);
       } else {
-        window.localStorage.removeItem(STORAGE_KEYS.sarvam);
+        window.localStorage.removeItem(API_STORAGE_KEYS.sarvam);
       }
 
       if (trimmedGemini) {
-        window.localStorage.setItem(STORAGE_KEYS.gemini, trimmedGemini);
+        window.localStorage.setItem(API_STORAGE_KEYS.gemini, trimmedGemini);
       } else {
-        window.localStorage.removeItem(STORAGE_KEYS.gemini);
+        window.localStorage.removeItem(API_STORAGE_KEYS.gemini);
       }
 
       const updated: ApiKeysConfig = {

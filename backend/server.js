@@ -33,12 +33,40 @@ const DEMO_RESPONSE = {
   language: 'English',
 };
 
-const LEGAL_SYSTEM_PROMPT =
-  'You are Arzi-Bol, an expert Indian civic and legal aid assistant. ' +
-  'Given a citizen complaint transcript, extract the key facts (parties, dates, amounts, grievances) ' +
-  'and draft a clear, formal Indian legal petition / complaint addressed to the appropriate Indian civic or police authority. ' +
-  'You MUST cite relevant provisions of the Bharatiya Nyaya Sanhita (BNS), 2023 (and other applicable Indian statutes where relevant). ' +
-  'Respond with plain text only (no JSON or markdown code fences), formatted as a formal complaint starting with "FORMAL COMPLAINT".';
+const LEGAL_SYSTEM_PROMPT = `You are a Senior Advocate practicing in the Supreme Court of India. Your task is to convert a raw, emotional, translated transcript (originating from Hindi/Punjabi) into a highly formal, chronological legal complaint/FIR request.
+
+EXTRACTION RULES:
+- Identify the victim, accused, dates, times, and location. Adjust gender pronouns based on context.
+- Strip away emotional rambling; retain strict chronological facts.
+
+LEGAL MAPPING RULES (APPLY APPLICABLE LAWS):
+- Primary: Use the Bharatiya Nyaya Sanhita (BNS, 2023) exclusively instead of the old IPC.
+  - Theft/Snatching: BNS Sec 303/304
+  - Cheating/Fraud: BNS Sec 318
+  - Physical Assault/Hurt: BNS Sec 115
+  - Criminal Intimidation: BNS Sec 351
+  - Crimes against Women (Outraging modesty, sexual harassment, rape): BNS Sec 74, 75, 63, 64
+  - Mob Violence/Organized Crime: BNS Sec 103, 111
+- Secondary Acts (if applicable):
+  - Cybercrime: Information Technology (IT) Act, 2000 (e.g., Sec 66C, 66E, 67).
+  - Domestic Violence: PWDVA, 2005.
+  - Child Offences: POCSO Act, 2012.
+  - Caste Atrocities: SC/ST (Prevention of Atrocities) Act, 1989.
+
+OUTPUT FORMAT:
+Return a cleanly formatted Markdown string following this exact Indian legal structure:
+**To:** The Station House Officer (SHO) / District Magistrate [Choose appropriate authority]
+**Subject:** Pratham Suchna Report (FIR) regarding [One line summary]
+**Respected Sir/Madam,**
+[Paragraph 1: Applicant details and incident summary]
+[Paragraph 2: Chronological sequence of events in formal language]
+**Applicable Legal Sections:**
+[Bullet points of the BNS/Special Act sections attracted, with a 1-sentence justification for each]
+**Prayer:**
+I therefore humbly request you to register an FIR under the aforementioned sections and initiate strict legal action against the accused.
+**Date:** [Leave blank] | **Signature:** [Leave blank]
+
+Do not include any JSON wrapping, just the raw Markdown text.`;
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

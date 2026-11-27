@@ -1,14 +1,17 @@
+import { useEffect, useState } from 'react';
 import {
   ArrowRight,
   CheckCircle2,
   Download,
-  Lock,
+  FileAudio,
   Mic,
   Scale,
   Settings,
   ShieldAlert,
   Sparkles,
 } from 'lucide-react';
+import type { ExamplePrompt } from '../types';
+import { VoiceRecorder } from '../VoiceRecorder';
 
 interface HomePresentationProps {
   hasConfiguredKeys: boolean;
@@ -52,9 +55,42 @@ export function HomePresentation({
   onOpenTerms,
   onRequestTermsGate,
 }: HomePresentationProps) {
+  const [capturedAudio, setCapturedAudio] = useState<{
+    blob: Blob;
+    url: string;
+  } | null>(null);
+  const [selectedExample, setSelectedExample] = useState<ExamplePrompt | null>(
+    null
+  );
+
+  useEffect(() => {
+    return () => {
+      if (capturedAudio?.url) {
+        URL.revokeObjectURL(capturedAudio.url);
+      }
+    };
+  }, [capturedAudio]);
+
+  const handleRecordingComplete = (audioBlob: Blob) => {
+    setSelectedExample(null);
+    setCapturedAudio((prev) => {
+      if (prev?.url) {
+        URL.revokeObjectURL(prev.url);
+      }
+      return {
+        blob: audioBlob,
+        url: URL.createObjectURL(audioBlob),
+      };
+    });
+  };
+
+  const handleExampleSelect = (example: ExamplePrompt) => {
+    setSelectedExample(example);
+  };
+
   return (
     <div className="flex flex-col gap-6 sm:gap-8">
-      {/* Hero & Disabled Microphone Placeholder */}
+      {/* Hero & Live Voice Recorder */}
       <section
         aria-label="Arzi-Bol Guided Workspace"
         className="relative overflow-hidden rounded-3xl border border-slate-200/90 bg-white p-5 shadow-md shadow-slate-200/50 sm:p-8 lg:p-10"
@@ -65,47 +101,38 @@ export function HomePresentation({
         />
 
         <div className="relative flex flex-col gap-8 lg:flex-row lg:items-center lg:justify-between">
-          {/* Left: Visually Striking Disabled Microphone Placeholder */}
-          <div className="flex flex-col items-center justify-center rounded-2xl border border-slate-200 bg-gradient-to-b from-slate-50 to-slate-100/80 px-6 py-8 text-center shadow-inner lg:w-5/12">
-            <div className="relative flex items-center justify-center">
-              <span
-                aria-hidden="true"
-                className="absolute h-44 w-44 rounded-full border border-dashed border-slate-300/90 bg-white/60 sm:h-48 sm:w-48"
-              />
-              <span
-                aria-hidden="true"
-                className="absolute h-38 w-38 rounded-full bg-slate-200/50 sm:h-42 sm:w-42"
-              />
-              <button
-                type="button"
-                disabled
-                aria-disabled="true"
-                aria-label="Microphone intake coming in Step 2"
-                title="Voice recording will be activated in Step 2"
-                className="relative z-10 flex h-32 w-32 cursor-not-allowed flex-col items-center justify-center rounded-full border-2 border-slate-300 bg-gradient-to-b from-slate-100 to-slate-200 text-slate-500 shadow-md sm:h-36 sm:w-36"
-              >
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/80 shadow-xs">
-                  <Mic className="h-6 w-6 text-slate-500" aria-hidden="true" />
+          {/* Left: Bulletproof Voice Recorder */}
+          <div className="flex flex-col items-center justify-center rounded-2xl border border-slate-200 bg-gradient-to-b from-slate-50 to-slate-100/80 px-5 py-7 text-center shadow-inner sm:px-6 sm:py-8 lg:w-5/12">
+            <VoiceRecorder
+              onRecordingComplete={handleRecordingComplete}
+              onExampleSelect={handleExampleSelect}
+            />
+
+            {capturedAudio && (
+              <div className="mt-5 w-full rounded-xl border border-emerald-200 bg-emerald-50/90 p-3 text-left text-xs text-emerald-900">
+                <div className="flex items-center gap-2 font-semibold">
+                  <FileAudio className="h-4 w-4 shrink-0 text-emerald-700" aria-hidden="true" />
+                  <span>
+                    Audio ready ({Math.max(1, Math.round(capturedAudio.blob.size / 1024))} KB ·{' '}
+                    {capturedAudio.blob.type || 'audio/webm'})
+                  </span>
                 </div>
-                <span className="mt-2.5 text-[11px] font-bold uppercase tracking-wider text-slate-600">
-                  Step 2 Preview
-                </span>
-              </button>
-            </div>
+                <audio
+                  controls
+                  src={capturedAudio.url}
+                  className="mt-2 h-8 w-full"
+                />
+              </div>
+            )}
 
-            <div className="mt-6 inline-flex items-center gap-1.5 rounded-full border border-slate-300 bg-white px-3 py-1 text-[11px] font-semibold text-slate-600 shadow-xs">
-              <Lock className="h-3 w-3 text-slate-500" aria-hidden="true" />
-              <span>Microphone Locked · Activates in Step 2</span>
-            </div>
-
-            <h1 className="mt-4 text-lg font-bold tracking-tight text-slate-900 sm:text-xl">
-              Voice Intake Standby
-            </h1>
-            <p className="mt-1.5 max-w-xs text-xs leading-relaxed text-slate-600 sm:text-sm">
-              {hasAcceptedTerms
-                ? 'Legal terms accepted. Configure your API keys in Settings so you are ready when voice capture activates.'
-                : 'Accept the Legal Terms before your first microphone session and configure your API keys in Settings.'}
-            </p>
+            {selectedExample && (
+              <div className="mt-5 w-full rounded-xl border border-blue-200 bg-blue-50/90 p-3 text-left text-xs text-slate-800">
+                <p className="font-semibold text-blue-900">
+                  Selected Example ({selectedExample.language}):
+                </p>
+                <p className="mt-1 leading-relaxed">{selectedExample.text}</p>
+              </div>
+            )}
 
             <div className="mt-5 flex w-full max-w-xs flex-col gap-2.5 sm:max-w-sm sm:flex-row sm:justify-center">
               {!hasAcceptedTerms ? (

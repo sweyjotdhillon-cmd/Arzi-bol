@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import axios from 'axios';
 import {
   AlertTriangle,
   Loader2,
@@ -8,22 +9,34 @@ import {
   Sparkles,
   Square,
 } from 'lucide-react';
-import type { ExamplePrompt } from './types';
+import { useGlobalError } from './components/GlobalErrorState';
+import type { ExamplePrompt, LegalPetitionResult } from './types';
+import { maskErrorMessage } from './utils/errorMasking';
 
 export type RecorderState =
   | 'idle'
   | 'requesting'
   | 'recording'
+  | 'processing'
+  | 'error'
   | 'denied'
   | 'unsupported';
 
 export interface VoiceRecorderProps {
-  onRecordingComplete: (audioBlob: Blob) => void;
+  onRecordingComplete: (audioBlob: Blob, result?: LegalPetitionResult) => void;
   onExampleSelect?: (example: ExamplePrompt) => void;
   disabled?: boolean;
 }
 
 const MAX_RECORDING_SECONDS = 60;
+const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
+const API_PROCESS_AUDIO_PATH = '/api/process-audio';
+
+const STORAGE_KEYS = {
+  sarvam: 'arzi_bol_sarvam_api_key',
+  gemini: 'arzi_bol_gemini_api_key',
+  geminiModel: 'arzi_bol_gemini_model',
+} as const;
 
 const DENIED_ERROR_MESSAGE =
   'Microphone access blocked. Click the lock icon (🔒) in your URL bar to allow access, then click Retry.';
@@ -89,6 +102,38 @@ function resolveSupportedMimeType(): string | undefined {
   return undefined;
 }
 
+function resolveAudioExtension(mimeType: string): string {
+  const lower = mimeType.toLowerCase();
+  if (lower.includes('mp4')) return 'mp4';
+  if (lower.includes('ogg')) return 'ogg';
+  if (lower.includes('wav')) return 'wav';
+  return 'webm';
+}
+
+function loadStoredSettings(): {
+  sarvamKey: string;
+  geminiKey: string;
+  geminiModel: string;
+} {
+  try {
+    const sarvamKey =
+      window.localStorage.getItem(STORAGE_KEYS.sarvam)?.trim() ?? '';
+    const geminiKey =
+      window.localStorage.getItem(STORAGE_KEYS.gemini)?.trim() ?? '';
+    const geminiModel =
+      window.localStorage.getItem(STORAGE_KEYS.geminiModel)?.trim() ||
+      DEFAULT_GEMINI_MODEL;
+
+    return { sarvamKey, geminiKey, geminiModel };
+  } catch {
+    return {
+      sarvamKey: '',
+      geminiKey: '',
+      geminiModel: DEFAULT_GEMINI_MODEL,
+    };
+  }
+}
+
 function getInitialSupportError(): {
   state: RecorderState;
   message: string | null;
@@ -122,6 +167,7 @@ export function VoiceRecorder({
   onExampleSelect,
   disabled = false,
 }: VoiceRecorderProps) {
+  const { showError, clearError } = useGlobalError();
   const initialSupport = getInitialSupportError();
 
   const [recorderState, setRecorderState] = useState<RecorderState>(
@@ -169,6 +215,60 @@ export function VoiceRecorder({
       mediaStreamRef.current = null;
     }
   }, []);
+
+  const submitRecording = useCallback(
+    async (audioBlob: Blob) => {
+      setRecorderState('processing');
+      setErrorMessage(null);
+      clearError();
+
+      const formData = new FormData();
+      const extension = resolveAudioExtension(audioBlob.type || 'audio/webm');
+      formData.append('audio', audioBlob, `recording.${extension}`);
+
+      const { sarvamKey, geminiKey, geminiModel } = loadStoredSettings();
+      formData.append('geminiModel', geminiModel);
+      if (sarvamKey) {
+        formData.append('sarvamKey', sarvamKey);
+      }
+      if (geminiKey) {
+        formData.append('geminiKey', geminiKey);
+      }
+
+      try {
+        const response = await axios.post<LegalPetitionResult>(
+          API_PROCESS_AUDIO_PATH,
+          formData,
+          { timeout: 60000 }
+        );
+
+        if (!isMountedRef.current) return;
+
+        setRecorderState('idle');
+        onRecordingCompleteRef.current(audioBlob, response.data);
+      } catch (err: unknown) {
+        if (!isMountedRef.current) return;
+
+        let rawError: unknown = err;
+        if (axios.isAxiosError(err)) {
+          const serverError = (err.response?.data as { error?: unknown } | undefined)
+            ?.error;
+          if (typeof serverError === 'string' && serverError.trim()) {
+            rawError = serverError.trim();
+          }
+        }
+
+        const cleanMessage = maskErrorMessage(
+          rawError,
+          'Failed to process your recording. Please try again.'
+        );
+        showError(cleanMessage);
+        setRecorderState('error');
+        setErrorMessage(cleanMessage);
+      }
+    },
+    [clearError, showError]
+  );
 
   const stopRecording = useCallback(() => {
     clearTimer();
@@ -252,7 +352,12 @@ export function VoiceRecorder({
   }, [clearTimer, initialSupport.state, stopStreamTracks]);
 
   const startRecording = useCallback(async () => {
-    if (disabled || recorderState === 'requesting' || recorderState === 'recording') {
+    if (
+      disabled ||
+      recorderState === 'requesting' ||
+      recorderState === 'recording' ||
+      recorderState === 'processing'
+    ) {
       return;
     }
 
@@ -278,6 +383,7 @@ export function VoiceRecorder({
 
     setRecorderState('requesting');
     setErrorMessage(null);
+    clearError();
     setSecondsRemaining(MAX_RECORDING_SECONDS);
     audioChunksRef.current = [];
 
@@ -302,7 +408,7 @@ export function VoiceRecorder({
         errorName === 'NotFoundError' ||
         errorName === 'DevicesNotFoundError'
       ) {
-        setRecorderState('idle');
+        setRecorderState('error');
         setErrorMessage(
           'No microphone detected. Please connect a microphone and try again.'
         );
@@ -313,7 +419,7 @@ export function VoiceRecorder({
         errorName === 'NotReadableError' ||
         errorName === 'TrackStartError'
       ) {
-        setRecorderState('idle');
+        setRecorderState('error');
         setErrorMessage(
           'Microphone is busy or unavailable. Close other apps using the mic and try again.'
         );
@@ -326,7 +432,7 @@ export function VoiceRecorder({
         return;
       }
 
-      setRecorderState('idle');
+      setRecorderState('error');
       setErrorMessage(
         'Unable to access microphone. Please check your device settings or try an example below.'
       );
@@ -383,11 +489,11 @@ export function VoiceRecorder({
       clearTimer();
       stopStreamTracks();
       if (!isMountedRef.current) return;
-      setRecorderState('idle');
+      const msg = 'An unexpected recording error occurred. Please try again.';
+      setRecorderState('error');
       setSecondsRemaining(MAX_RECORDING_SECONDS);
-      setErrorMessage(
-        'An unexpected recording error occurred. Please try again.'
-      );
+      setErrorMessage(msg);
+      showError(msg);
     };
 
     recorder.onstop = () => {
@@ -407,18 +513,17 @@ export function VoiceRecorder({
         'audio/webm';
 
       const audioBlob = new Blob(chunks, { type: resolvedType });
-
-      setRecorderState('idle');
       setSecondsRemaining(MAX_RECORDING_SECONDS);
 
       if (audioBlob.size === 0) {
-        setErrorMessage(
-          'No audio was captured. Please speak into your microphone and try again.'
-        );
+        const msg =
+          'No audio was captured. Please speak into your microphone and try again.';
+        setRecorderState('error');
+        setErrorMessage(msg);
         return;
       }
 
-      onRecordingCompleteRef.current(audioBlob);
+      void submitRecording(audioBlob);
     };
 
     try {
@@ -432,7 +537,7 @@ export function VoiceRecorder({
     } catch {
       stopStreamTracks();
       mediaRecorderRef.current = null;
-      setRecorderState('idle');
+      setRecorderState('error');
       setErrorMessage('Failed to start audio recording. Please try again.');
       return;
     }
@@ -454,18 +559,25 @@ export function VoiceRecorder({
       }
     }, 250);
   }, [
+    clearError,
     clearTimer,
     disabled,
     recorderState,
+    showError,
     stopRecording,
     stopStreamTracks,
+    submitRecording,
   ]);
 
   const handleMainButtonClick = () => {
     if (disabled) return;
     if (recorderState === 'recording') {
       stopRecording();
-    } else if (recorderState === 'idle' || recorderState === 'denied') {
+    } else if (
+      recorderState === 'idle' ||
+      recorderState === 'error' ||
+      recorderState === 'denied'
+    ) {
       void startRecording();
     }
   };
@@ -477,9 +589,12 @@ export function VoiceRecorder({
 
   const isRequesting = recorderState === 'requesting';
   const isRecording = recorderState === 'recording';
+  const isProcessing = recorderState === 'processing';
+  const isError = recorderState === 'error';
   const isDenied = recorderState === 'denied';
   const isUnsupported = recorderState === 'unsupported';
-  const isButtonDisabled = disabled || isRequesting || isUnsupported;
+  const isButtonDisabled =
+    disabled || isRequesting || isProcessing || isUnsupported;
 
   return (
     <div className="flex w-full flex-col items-center justify-center">
@@ -498,7 +613,7 @@ export function VoiceRecorder({
           </>
         )}
 
-        {!isRecording && !isDenied && !isUnsupported && (
+        {!isRecording && !isDenied && !isUnsupported && !isError && (
           <span
             aria-hidden="true"
             className="absolute h-44 w-44 rounded-full bg-blue-500/10 sm:h-48 sm:w-48"
@@ -513,27 +628,31 @@ export function VoiceRecorder({
           aria-label={
             isRecording
               ? `Stop recording (${formatCountdown(secondsRemaining)} remaining)`
-              : isRequesting
-                ? 'Requesting microphone permission'
-                : isDenied
-                  ? 'Microphone access blocked. Click to retry'
-                  : isUnsupported
-                    ? 'Microphone unavailable'
-                    : 'Start voice recording'
+              : isProcessing
+                ? 'Processing your recording'
+                : isRequesting
+                  ? 'Requesting microphone permission'
+                  : isDenied
+                    ? 'Microphone access blocked. Click to retry'
+                    : isError
+                      ? 'Recording error. Click to try again'
+                      : isUnsupported
+                        ? 'Microphone unavailable'
+                        : 'Start voice recording'
           }
           className={`relative z-10 flex h-36 w-36 flex-col items-center justify-center rounded-full border-4 shadow-xl transition-all duration-200 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 sm:h-40 sm:w-40 ${
             isRecording
               ? 'scale-105 border-rose-300 bg-rose-600 text-white shadow-rose-500/30 hover:bg-rose-700 focus-visible:ring-rose-500'
-              : isRequesting
+              : isRequesting || isProcessing
                 ? 'cursor-wait border-blue-200 bg-blue-700 text-white focus-visible:ring-blue-500'
-                : isDenied
+                : isDenied || isError
                   ? 'border-red-300 bg-gradient-to-b from-slate-200 to-red-100 text-red-700 shadow-red-200/50 hover:from-slate-300 hover:to-red-200 focus-visible:ring-red-500'
                   : isUnsupported || disabled
                     ? 'cursor-not-allowed border-slate-300 bg-slate-200 text-slate-500 shadow-none'
                     : 'border-blue-300 bg-gradient-to-b from-blue-600 to-blue-800 text-white shadow-blue-600/30 hover:scale-105 hover:from-blue-700 hover:to-blue-900 active:scale-95 focus-visible:ring-blue-600'
           }`}
         >
-          {isRequesting ? (
+          {isRequesting || isProcessing ? (
             <Loader2 className="h-12 w-12 animate-spin" aria-hidden="true" />
           ) : isRecording ? (
             <Square className="h-10 w-10 fill-current" aria-hidden="true" />
@@ -546,13 +665,17 @@ export function VoiceRecorder({
           <span className="mt-2.5 font-mono text-xs font-bold uppercase tracking-wider">
             {isRecording
               ? formatCountdown(secondsRemaining)
-              : isRequesting
-                ? 'Requesting'
-                : isDenied
-                  ? 'Blocked'
-                  : isUnsupported
-                    ? 'Unavailable'
-                    : 'Tap to Speak'}
+              : isProcessing
+                ? 'Processing'
+                : isRequesting
+                  ? 'Requesting'
+                  : isDenied
+                    ? 'Blocked'
+                    : isError
+                      ? 'Retry'
+                      : isUnsupported
+                        ? 'Unavailable'
+                        : 'Tap to Speak'}
           </span>
         </button>
       </div>
@@ -561,8 +684,10 @@ export function VoiceRecorder({
       <div className="mt-4 text-center">
         <p className="text-base font-bold tracking-tight text-slate-900 sm:text-lg">
           {isRecording && 'Recording in progress... Tap to stop'}
+          {isProcessing && 'Transcribing & drafting legal petition...'}
           {isRequesting && 'Waiting for microphone permission...'}
           {isDenied && 'Microphone Access Denied'}
+          {isError && 'Could Not Process Recording'}
           {isUnsupported && 'Microphone Unavailable'}
           {recorderState === 'idle' &&
             'Tap the microphone to record your grievance'}
@@ -570,11 +695,13 @@ export function VoiceRecorder({
         <p className="mt-1 text-xs text-slate-600 sm:text-sm">
           {isRecording
             ? `Auto-stops in ${formatCountdown(secondsRemaining)} (60s max)`
-            : 'Supports Hindi, Punjabi, English & regional languages (60s max)'}
+            : isProcessing
+              ? 'Connecting to speech-to-text and BNS legal drafting engine'
+              : 'Supports Hindi, Punjabi, English & regional languages (60s max)'}
         </p>
       </div>
 
-      {/* Persistent error banner (Denied / Insecure Context / Other Errors) */}
+      {/* Persistent error banner (Denied / Insecure Context / Processing Errors) */}
       {errorMessage && (
         <div
           role="alert"
@@ -588,14 +715,14 @@ export function VoiceRecorder({
             />
             <div className="flex-1">
               <p className="font-semibold leading-relaxed">{errorMessage}</p>
-              {isDenied && (
+              {(isDenied || isError) && (
                 <button
                   type="button"
                   onClick={() => void startRecording()}
                   className="mt-3 inline-flex items-center gap-1.5 rounded-xl bg-red-600 px-3.5 py-2 text-xs font-semibold text-white shadow-xs transition hover:bg-red-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 focus-visible:ring-offset-1"
                 >
                   <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-                  <span>Retry / Check Again</span>
+                  <span>{isDenied ? 'Retry / Check Again' : 'Try Again'}</span>
                 </button>
               )}
             </div>

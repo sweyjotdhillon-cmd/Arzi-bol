@@ -9,9 +9,21 @@ import FormData from 'form-data';
 const app = express();
 const PORT = Number(process.env.PORT) || 3001;
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || 'http://localhost:8080';
+const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
+const SAFE_MODEL_REGEX = /^[a-zA-Z0-9._-]+$/;
 
-const rawApiKey = (process.env.SARVAM_API_KEY || '').trim();
-const HAS_SARVAM_KEY = Boolean(rawApiKey && rawApiKey !== 'your_key_here');
+const envSarvamKey = (process.env.SARVAM_API_KEY || '').trim();
+const envGeminiKey = (process.env.GEMINI_API_KEY || '').trim();
+
+function isValidKey(value) {
+  return (
+    typeof value === 'string' &&
+    value.trim().length > 0 &&
+    value.trim() !== 'your_key_here'
+  );
+}
+
+const HAS_ENV_SARVAM_KEY = isValidKey(envSarvamKey);
 
 const DEMO_RESPONSE = {
   transcript:
@@ -20,6 +32,13 @@ const DEMO_RESPONSE = {
     'FORMAL COMPLAINT\n\nSubject: Complaint regarding unpaid wages and physical assault.\n\nRespected Sir/Madam,\nI beg to state that my contractor withheld ₹3,000 in wages. Upon requesting payment yesterday, I was physically assaulted. I request immediate action under BNS Sections 115 (Voluntarily causing hurt) and 351 (Criminal Intimidation).',
   language: 'English',
 };
+
+const LEGAL_SYSTEM_PROMPT =
+  'You are Arzi-Bol, an expert Indian civic and legal aid assistant. ' +
+  'Given a citizen complaint transcript, extract the key facts (parties, dates, amounts, grievances) ' +
+  'and draft a clear, formal Indian legal petition / complaint addressed to the appropriate Indian civic or police authority. ' +
+  'You MUST cite relevant provisions of the Bharatiya Nyaya Sanhita (BNS), 2023 (and other applicable Indian statutes where relevant). ' +
+  'Respond with plain text only (no JSON or markdown code fences), formatted as a formal complaint starting with "FORMAL COMPLAINT".';
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -46,76 +65,171 @@ app.use(
 );
 app.use(express.json({ limit: '1mb' }));
 
-async function transcribeWithSarvam(audioBuffer, originalName, mimeType) {
+function resolveGeminiModel(rawModel) {
+  if (typeof rawModel !== 'string') return DEFAULT_GEMINI_MODEL;
+  const trimmed = rawModel.trim();
+  if (!trimmed || !SAFE_MODEL_REGEX.test(trimmed)) {
+    return DEFAULT_GEMINI_MODEL;
+  }
+  return trimmed;
+}
+
+function sanitizeUpstreamMessage(rawMessage) {
+  if (typeof rawMessage !== 'string') return '';
+  return rawMessage
+    .replace(/https?:\/\/\S+/gi, '')
+    .replace(/key=[^&\s]+/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function formatUpstreamError(err, serviceName) {
+  const status = err?.response?.status;
+  const upstreamMsg = sanitizeUpstreamMessage(
+    err?.response?.data?.error?.message || err?.response?.data?.message || ''
+  );
+
+  if (status === 401 || status === 403) {
+    return {
+      status: 401,
+      message: `Invalid ${serviceName} API key. Please open Settings and verify your key.`,
+    };
+  }
+
+  if (status === 429) {
+    return {
+      status: 429,
+      message: `${serviceName} rate limit reached. Please wait a moment and try again.`,
+    };
+  }
+
+  if (status === 404) {
+    return {
+      status: 400,
+      message: `${serviceName} model or endpoint was not found. Please check your model selection in Settings.`,
+    };
+  }
+
+  if (err?.code === 'ECONNABORTED' || err?.code === 'ETIMEDOUT') {
+    return {
+      status: 504,
+      message: `${serviceName} request timed out. Please try again.`,
+    };
+  }
+
+  if (upstreamMsg && upstreamMsg.length <= 200 && !/[{}[\]]/.test(upstreamMsg)) {
+    return {
+      status: status && status >= 400 && status < 500 ? status : 502,
+      message: `${serviceName} error: ${upstreamMsg}`,
+    };
+  }
+
+  return {
+    status: 502,
+    message: `Unable to reach ${serviceName}. Please try again shortly.`,
+  };
+}
+
+async function transcribeWithSarvam(audioBuffer, originalName, mimeType, sarvamKey) {
   const form = new FormData();
   form.append('file', audioBuffer, {
     filename: originalName || 'recording.webm',
     contentType: mimeType || 'audio/webm',
   });
-  form.append('model', 'saarika:v2');
-  form.append('language_code', 'unknown');
+  form.append('model', 'saaras:v4');
+  form.append('mode', 'transcribe');
 
-  const response = await axios.post(
-    'https://api.sarvam.ai/speech-to-text',
-    form,
-    {
-      headers: {
-        ...form.getHeaders(),
-        'api-subscription-key': rawApiKey,
-      },
-      timeout: 30000,
-    }
-  );
+  try {
+    const response = await axios.post(
+      'https://api.sarvam.ai/speech-to-text',
+      form,
+      {
+        headers: {
+          ...form.getHeaders(),
+          'api-subscription-key': sarvamKey,
+        },
+        timeout: 30000,
+      }
+    );
 
-  return {
-    transcript: response.data?.transcript || '',
-    language: response.data?.language_code || 'English',
-  };
+    return {
+      transcript: response.data?.transcript || '',
+      language: response.data?.language_code || 'English',
+    };
+  } catch (err) {
+    const formatted = formatUpstreamError(err, 'Sarvam AI');
+    const wrapped = new Error(formatted.message);
+    wrapped.statusCode = formatted.status;
+    throw wrapped;
+  }
 }
 
-async function draftPetitionWithSarvam(transcript, language) {
-  const systemPrompt =
-    'You are Arzi-Bol, an expert Indian civic and legal aid assistant. ' +
-    'Given a citizen complaint transcript, extract the key facts (parties, dates, amounts, grievances) ' +
-    'and draft a clear, formal legal petition / complaint addressed to the appropriate Indian civic or police authority. ' +
-    'Cite relevant Indian legal provisions (such as Bharatiya Nyaya Sanhita (BNS), Payment of Wages Act, or civic grievance rules) where applicable. ' +
-    'Respond with plain text only, formatted as a formal complaint starting with "FORMAL COMPLAINT".';
+async function draftPetitionWithGemini(transcript, language, geminiKey, geminiModel) {
+  const modelName = resolveGeminiModel(geminiModel);
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+    modelName
+  )}:generateContent?key=${encodeURIComponent(geminiKey)}`;
 
-  const response = await axios.post(
-    'https://api.sarvam.ai/v1/chat/completions',
-    {
-      model: 'sarvam-m',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        {
-          role: 'user',
-          content: `Language: ${language}\nCitizen Statement:\n${transcript}`,
+  try {
+    const response = await axios.post(
+      endpoint,
+      {
+        systemInstruction: {
+          parts: [{ text: LEGAL_SYSTEM_PROMPT }],
         },
-      ],
-      temperature: 0.2,
-    },
-    {
-      headers: {
-        'Content-Type': 'application/json',
-        'api-subscription-key': rawApiKey,
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                text: `Detected Language: ${language}\nCitizen Statement:\n${transcript}`,
+              },
+            ],
+          },
+        ],
+        generationConfig: {
+          temperature: 0.2,
+        },
       },
-      timeout: 30000,
-    }
-  );
+      {
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        timeout: 30000,
+      }
+    );
 
-  const legalPetition =
-    response.data?.choices?.[0]?.message?.content?.trim() || '';
-  if (!legalPetition) {
-    throw new Error('Empty legal petition returned from Sarvam LLM.');
+    const parts = response.data?.candidates?.[0]?.content?.parts;
+    const legalPetition = Array.isArray(parts)
+      ? parts
+          .map((part) => (typeof part?.text === 'string' ? part.text : ''))
+          .join('')
+          .trim()
+      : '';
+
+    if (!legalPetition) {
+      const err = new Error('Gemini returned an empty legal petition. Please try again.');
+      err.statusCode = 502;
+      throw err;
+    }
+
+    return legalPetition;
+  } catch (err) {
+    if (err?.statusCode) {
+      throw err;
+    }
+    const formatted = formatUpstreamError(err, 'Gemini');
+    const wrapped = new Error(formatted.message);
+    wrapped.statusCode = formatted.status;
+    throw wrapped;
   }
-  return legalPetition;
 }
 
 const handleHealth = (_req, res) => {
   res.status(200).json({
     status: 'ok',
     service: 'arzi-bol-backend',
-    mode: HAS_SARVAM_KEY ? 'live' : 'local-demo',
+    mode: HAS_ENV_SARVAM_KEY ? 'live' : 'local-demo',
   });
 };
 
@@ -128,15 +242,37 @@ app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
       return res.status(400).json({ error: 'No audio file uploaded.' });
     }
 
-    if (!HAS_SARVAM_KEY) {
+    const requestSarvamKey =
+      typeof req.body?.sarvamKey === 'string' ? req.body.sarvamKey.trim() : '';
+    const sarvamKey = isValidKey(requestSarvamKey)
+      ? requestSarvamKey
+      : envSarvamKey;
+
+    const requestGeminiKey =
+      typeof req.body?.geminiKey === 'string' ? req.body.geminiKey.trim() : '';
+    const geminiKey = isValidKey(requestGeminiKey)
+      ? requestGeminiKey
+      : envGeminiKey;
+
+    const geminiModel = resolveGeminiModel(req.body?.geminiModel);
+
+    // Keyless fallback: if SARVAM_API_KEY is absent, bypass all Axios calls and return demo JSON after 2s
+    if (!isValidKey(sarvamKey)) {
       await delay(2000);
       return res.status(200).json(DEMO_RESPONSE);
+    }
+
+    if (!isValidKey(geminiKey)) {
+      return res.status(400).json({
+        error: 'Gemini API key is required. Please configure it in Settings.',
+      });
     }
 
     const { transcript, language } = await transcribeWithSarvam(
       req.file.buffer,
       req.file.originalname,
-      req.file.mimetype
+      req.file.mimetype,
+      sarvamKey
     );
 
     if (!transcript.trim()) {
@@ -145,7 +281,12 @@ app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
         .json({ error: 'Could not detect speech in the uploaded audio.' });
     }
 
-    const legal_petition = await draftPetitionWithSarvam(transcript, language);
+    const legal_petition = await draftPetitionWithGemini(
+      transcript,
+      language,
+      geminiKey,
+      geminiModel
+    );
 
     return res.status(200).json({
       transcript,
@@ -153,10 +294,13 @@ app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
       language,
     });
   } catch (err) {
-    console.error('Error in /api/process-audio:', err?.message || err);
-    return res
-      .status(500)
-      .json({ error: 'Failed to process audio. Please try again.' });
+    const statusCode = err?.statusCode || 500;
+    const message =
+      err?.statusCode && err?.message
+        ? err.message
+        : 'Failed to process audio. Please try again.';
+    console.error('Error in /api/process-audio:', message);
+    return res.status(statusCode).json({ error: message });
   }
 });
 
@@ -172,12 +316,24 @@ app.post('/api/process-text', async (req, res) => {
       return res.status(400).json({ error: 'Text input is required.' });
     }
 
-    if (!HAS_SARVAM_KEY) {
+    const requestGeminiKey =
+      typeof req.body?.geminiKey === 'string' ? req.body.geminiKey.trim() : '';
+    const geminiKey = isValidKey(requestGeminiKey)
+      ? requestGeminiKey
+      : envGeminiKey;
+    const geminiModel = resolveGeminiModel(req.body?.geminiModel);
+
+    if (!HAS_ENV_SARVAM_KEY || !isValidKey(geminiKey)) {
       await delay(2000);
       return res.status(200).json(DEMO_RESPONSE);
     }
 
-    const legal_petition = await draftPetitionWithSarvam(text, language);
+    const legal_petition = await draftPetitionWithGemini(
+      text,
+      language,
+      geminiKey,
+      geminiModel
+    );
 
     return res.status(200).json({
       transcript: text,
@@ -185,10 +341,13 @@ app.post('/api/process-text', async (req, res) => {
       language,
     });
   } catch (err) {
-    console.error('Error in /api/process-text:', err?.message || err);
-    return res
-      .status(500)
-      .json({ error: 'Failed to process text. Please try again.' });
+    const statusCode = err?.statusCode || 500;
+    const message =
+      err?.statusCode && err?.message
+        ? err.message
+        : 'Failed to process text. Please try again.';
+    console.error('Error in /api/process-text:', message);
+    return res.status(statusCode).json({ error: message });
   }
 });
 
@@ -204,8 +363,8 @@ app.use((err, _req, res, _next) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  const modeLabel = HAS_SARVAM_KEY
-    ? 'Live Sarvam AI Mode'
+  const modeLabel = HAS_ENV_SARVAM_KEY
+    ? 'Live Sarvam + Gemini Mode'
     : 'Local Demo Mode (no SARVAM_API_KEY)';
   console.log(`Arzi-Bol backend listening on port ${PORT} [${modeLabel}]`);
 });

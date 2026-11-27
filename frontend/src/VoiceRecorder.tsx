@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import {
   AlertTriangle,
+  FileText,
   Loader2,
   Mic,
   MicOff,
@@ -179,6 +180,7 @@ export function VoiceRecorder({
   const [secondsRemaining, setSecondsRemaining] = useState<number>(
     MAX_RECORDING_SECONDS
   );
+  const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const [activeExampleId, setActiveExampleId] = useState<string | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -244,6 +246,7 @@ export function VoiceRecorder({
 
         if (!isMountedRef.current) return;
 
+        setRecordedBlob(null);
         setRecorderState('idle');
         onRecordingCompleteRef.current(audioBlob, response.data);
       } catch (err: unknown) {
@@ -382,6 +385,7 @@ export function VoiceRecorder({
     }
 
     setRecorderState('requesting');
+    setRecordedBlob(null);
     setErrorMessage(null);
     clearError();
     setSecondsRemaining(MAX_RECORDING_SECONDS);
@@ -523,7 +527,8 @@ export function VoiceRecorder({
         return;
       }
 
-      void submitRecording(audioBlob);
+      setRecordedBlob(audioBlob);
+      setRecorderState('idle');
     };
 
     try {
@@ -566,7 +571,6 @@ export function VoiceRecorder({
     showError,
     stopRecording,
     stopStreamTracks,
-    submitRecording,
   ]);
 
   const handleMainButtonClick = () => {
@@ -587,6 +591,20 @@ export function VoiceRecorder({
     onExampleSelect?.(example);
   };
 
+  const handleSubmitRecorded = () => {
+    if (!recordedBlob || disabled || recorderState === 'processing') return;
+    void submitRecording(recordedBlob);
+  };
+
+  const handleDiscardRecording = () => {
+    if (recorderState === 'processing') return;
+    setRecordedBlob(null);
+    setErrorMessage(null);
+    clearError();
+    setRecorderState('idle');
+    setSecondsRemaining(MAX_RECORDING_SECONDS);
+  };
+
   const isRequesting = recorderState === 'requesting';
   const isRecording = recorderState === 'recording';
   const isProcessing = recorderState === 'processing';
@@ -598,87 +616,118 @@ export function VoiceRecorder({
 
   return (
     <div className="flex w-full flex-col items-center justify-center">
-      {/* Massive, visually striking Microphone button */}
-      <div className="relative flex items-center justify-center py-2">
-        {isRecording && (
-          <>
-            <span
-              aria-hidden="true"
-              className="absolute h-48 w-48 rounded-full bg-rose-500/25 animate-ping sm:h-52 sm:w-52"
-            />
-            <span
-              aria-hidden="true"
-              className="absolute h-44 w-44 rounded-full border-2 border-rose-400/60 animate-pulse sm:h-48 sm:w-48"
-            />
-          </>
-        )}
+      {recordedBlob ? (
+        <div className="flex w-full max-w-md flex-col items-center justify-center gap-3 py-4">
+          <button
+            type="button"
+            onClick={handleSubmitRecorded}
+            disabled={disabled || isProcessing}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-b from-blue-600 to-blue-800 px-6 py-4 text-base font-bold text-white shadow-lg shadow-blue-600/25 transition hover:from-blue-700 hover:to-blue-900 focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-600 focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-70"
+          >
+            {isProcessing ? (
+              <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
+            ) : (
+              <FileText className="h-5 w-5" aria-hidden="true" />
+            )}
+            <span>
+              {isProcessing
+                ? 'Drafting Legal Petition...'
+                : 'Draft Legal Petition'}
+            </span>
+          </button>
 
-        {!isRecording && !isDenied && !isUnsupported && !isError && (
-          <span
-            aria-hidden="true"
-            className="absolute h-44 w-44 rounded-full bg-blue-500/10 sm:h-48 sm:w-48"
-          />
-        )}
-
-        <button
-          type="button"
-          onClick={handleMainButtonClick}
-          disabled={isButtonDisabled}
-          aria-live="polite"
-          aria-label={
-            isRecording
-              ? `Stop recording (${formatCountdown(secondsRemaining)} remaining)`
-              : isProcessing
-                ? 'Processing your recording'
-                : isRequesting
-                  ? 'Requesting microphone permission'
-                  : isDenied
-                    ? 'Microphone access blocked. Click to retry'
-                    : isError
-                      ? 'Recording error. Click to try again'
-                      : isUnsupported
-                        ? 'Microphone unavailable'
-                        : 'Start voice recording'
-          }
-          className={`relative z-10 flex h-36 w-36 flex-col items-center justify-center rounded-full border-4 shadow-xl transition-all duration-200 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 sm:h-40 sm:w-40 ${
-            isRecording
-              ? 'scale-105 border-rose-300 bg-rose-600 text-white shadow-rose-500/30 hover:bg-rose-700 focus-visible:ring-rose-500'
-              : isRequesting || isProcessing
-                ? 'cursor-wait border-blue-200 bg-blue-700 text-white focus-visible:ring-blue-500'
-                : isDenied || isError
-                  ? 'border-red-300 bg-gradient-to-b from-slate-200 to-red-100 text-red-700 shadow-red-200/50 hover:from-slate-300 hover:to-red-200 focus-visible:ring-red-500'
-                  : isUnsupported || disabled
-                    ? 'cursor-not-allowed border-slate-300 bg-slate-200 text-slate-500 shadow-none'
-                    : 'border-blue-300 bg-gradient-to-b from-blue-600 to-blue-800 text-white shadow-blue-600/30 hover:scale-105 hover:from-blue-700 hover:to-blue-900 active:scale-95 focus-visible:ring-blue-600'
-          }`}
-        >
-          {isRequesting || isProcessing ? (
-            <Loader2 className="h-12 w-12 animate-spin" aria-hidden="true" />
-          ) : isRecording ? (
-            <Square className="h-10 w-10 fill-current" aria-hidden="true" />
-          ) : isDenied || isUnsupported ? (
-            <MicOff className="h-12 w-12" aria-hidden="true" />
-          ) : (
-            <Mic className="h-12 w-12" aria-hidden="true" />
+          <button
+            type="button"
+            onClick={handleDiscardRecording}
+            disabled={isProcessing}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 shadow-xs transition hover:border-red-300 hover:bg-red-50 hover:text-red-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <span>🗑️ Discard &amp; Re-record</span>
+          </button>
+        </div>
+      ) : (
+        /* Massive, visually striking Microphone button */
+        <div className="relative flex items-center justify-center py-2">
+          {isRecording && (
+            <>
+              <span
+                aria-hidden="true"
+                className="absolute h-48 w-48 rounded-full bg-rose-500/25 animate-ping sm:h-52 sm:w-52"
+              />
+              <span
+                aria-hidden="true"
+                className="absolute h-44 w-44 rounded-full border-2 border-rose-400/60 animate-pulse sm:h-48 sm:w-48"
+              />
+            </>
           )}
 
-          <span className="mt-2.5 font-mono text-xs font-bold uppercase tracking-wider">
-            {isRecording
-              ? formatCountdown(secondsRemaining)
-              : isProcessing
-                ? 'Processing'
-                : isRequesting
-                  ? 'Requesting'
-                  : isDenied
-                    ? 'Blocked'
-                    : isError
-                      ? 'Retry'
-                      : isUnsupported
-                        ? 'Unavailable'
-                        : 'Tap to Speak'}
-          </span>
-        </button>
-      </div>
+          {!isRecording && !isDenied && !isUnsupported && !isError && (
+            <span
+              aria-hidden="true"
+              className="absolute h-44 w-44 rounded-full bg-blue-500/10 sm:h-48 sm:w-48"
+            />
+          )}
+
+          <button
+            type="button"
+            onClick={handleMainButtonClick}
+            disabled={isButtonDisabled}
+            aria-live="polite"
+            aria-label={
+              isRecording
+                ? `Stop recording (${formatCountdown(secondsRemaining)} remaining)`
+                : isProcessing
+                  ? 'Processing your recording'
+                  : isRequesting
+                    ? 'Requesting microphone permission'
+                    : isDenied
+                      ? 'Microphone access blocked. Click to retry'
+                      : isError
+                        ? 'Recording error. Click to try again'
+                        : isUnsupported
+                          ? 'Microphone unavailable'
+                          : 'Start voice recording'
+            }
+            className={`relative z-10 flex h-36 w-36 flex-col items-center justify-center rounded-full border-4 shadow-xl transition-all duration-200 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 sm:h-40 sm:w-40 ${
+              isRecording
+                ? 'scale-105 border-rose-300 bg-rose-600 text-white shadow-rose-500/30 hover:bg-rose-700 focus-visible:ring-rose-500'
+                : isRequesting || isProcessing
+                  ? 'cursor-wait border-blue-200 bg-blue-700 text-white focus-visible:ring-blue-500'
+                  : isDenied || isError
+                    ? 'border-red-300 bg-gradient-to-b from-slate-200 to-red-100 text-red-700 shadow-red-200/50 hover:from-slate-300 hover:to-red-200 focus-visible:ring-red-500'
+                    : isUnsupported || disabled
+                      ? 'cursor-not-allowed border-slate-300 bg-slate-200 text-slate-500 shadow-none'
+                      : 'border-blue-300 bg-gradient-to-b from-blue-600 to-blue-800 text-white shadow-blue-600/30 hover:scale-105 hover:from-blue-700 hover:to-blue-900 active:scale-95 focus-visible:ring-blue-600'
+            }`}
+          >
+            {isRequesting || isProcessing ? (
+              <Loader2 className="h-12 w-12 animate-spin" aria-hidden="true" />
+            ) : isRecording ? (
+              <Square className="h-10 w-10 fill-current" aria-hidden="true" />
+            ) : isDenied || isUnsupported ? (
+              <MicOff className="h-12 w-12" aria-hidden="true" />
+            ) : (
+              <Mic className="h-12 w-12" aria-hidden="true" />
+            )}
+
+            <span className="mt-2.5 font-mono text-xs font-bold uppercase tracking-wider">
+              {isRecording
+                ? formatCountdown(secondsRemaining)
+                : isProcessing
+                  ? 'Processing'
+                  : isRequesting
+                    ? 'Requesting'
+                    : isDenied
+                      ? 'Blocked'
+                      : isError
+                        ? 'Retry'
+                        : isUnsupported
+                          ? 'Unavailable'
+                          : 'Tap to Speak'}
+            </span>
+          </button>
+        </div>
+      )}
 
       {/* Status caption */}
       <div className="mt-4 text-center">
@@ -689,7 +738,12 @@ export function VoiceRecorder({
           {isDenied && 'Microphone Access Denied'}
           {isError && 'Could Not Process Recording'}
           {isUnsupported && 'Microphone Unavailable'}
+          {!isProcessing &&
+            !isError &&
+            recordedBlob &&
+            'Recording captured and ready'}
           {recorderState === 'idle' &&
+            !recordedBlob &&
             'Tap the microphone to record your grievance'}
         </p>
         <p className="mt-1 text-xs text-slate-600 sm:text-sm">
@@ -697,7 +751,9 @@ export function VoiceRecorder({
             ? `Auto-stops in ${formatCountdown(secondsRemaining)} (60s max)`
             : isProcessing
               ? 'Connecting to speech-to-text and BNS legal drafting engine'
-              : 'Supports Hindi, Punjabi, English & regional languages (60s max)'}
+              : recordedBlob
+                ? 'Review your choice below to draft the FIR petition or re-record'
+                : 'Supports Hindi, Punjabi, English & regional languages (60s max)'}
         </p>
       </div>
 
@@ -715,7 +771,7 @@ export function VoiceRecorder({
             />
             <div className="flex-1">
               <p className="font-semibold leading-relaxed">{errorMessage}</p>
-              {(isDenied || isError) && (
+              {(isDenied || (isError && !recordedBlob)) && (
                 <button
                   type="button"
                   onClick={() => void startRecording()}

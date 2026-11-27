@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { CheckCircle2, Eye, EyeOff, KeyRound, ShieldCheck, X } from 'lucide-react';
-import { useErrorBanner } from './ErrorBanner';
+import { useGlobalError } from './GlobalErrorState';
 
 export interface ApiKeysConfig {
   sarvamApiKey: string;
@@ -30,7 +30,7 @@ interface SettingsModalProps {
 }
 
 export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) {
-  const { showError } = useErrorBanner();
+  const { showError } = useGlobalError();
   const [sarvamApiKey, setSarvamApiKey] = useState('');
   const [geminiApiKey, setGeminiApiKey] = useState('');
   const [showSarvamKey, setShowSarvamKey] = useState(false);

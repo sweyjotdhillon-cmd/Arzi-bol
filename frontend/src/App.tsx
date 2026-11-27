@@ -1,17 +1,24 @@
 import { useState } from 'react';
-import { ErrorProvider } from './components/ErrorBanner';
-import { HomeView } from './components/HomeView';
+import { GlobalErrorProvider } from './components/GlobalErrorState';
+import { HomePresentation } from './components/HomePresentation';
 import { Layout, type ActiveView } from './components/Layout';
 import {
   loadStoredApiKeys,
   SettingsModal,
   type ApiKeysConfig,
 } from './components/SettingsModal';
-import { TermsView } from './components/TermsView';
+import {
+  hasAcceptedTerms as loadAcceptedTerms,
+  TermsAndConditions,
+} from './components/TermsAndConditions';
 
 function ArziBolShell() {
   const [activeView, setActiveView] = useState<ActiveView>('home');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isTermsModalOpen, setIsTermsModalOpen] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState<boolean>(() =>
+    loadAcceptedTerms()
+  );
   const [apiKeys, setApiKeys] = useState<ApiKeysConfig>(() =>
     loadStoredApiKeys()
   );
@@ -19,6 +26,12 @@ function ArziBolShell() {
   const hasConfiguredKeys = Boolean(
     apiKeys.sarvamApiKey.trim() && apiKeys.geminiApiKey.trim()
   );
+
+  const handleTermsAgreed = () => {
+    setTermsAccepted(true);
+    setIsTermsModalOpen(false);
+    setActiveView('home');
+  };
 
   return (
     <Layout
@@ -28,13 +41,28 @@ function ArziBolShell() {
       hasConfiguredKeys={hasConfiguredKeys}
     >
       {activeView === 'home' ? (
-        <HomeView
+        <HomePresentation
           hasConfiguredKeys={hasConfiguredKeys}
+          hasAcceptedTerms={termsAccepted}
           onOpenSettings={() => setIsSettingsOpen(true)}
           onOpenTerms={() => setActiveView('terms')}
+          onRequestTermsGate={() => setIsTermsModalOpen(true)}
         />
       ) : (
-        <TermsView onBack={() => setActiveView('home')} />
+        <TermsAndConditions
+          hasAccepted={termsAccepted}
+          onAgree={handleTermsAgreed}
+          onBack={() => setActiveView('home')}
+        />
+      )}
+
+      {isTermsModalOpen && (
+        <TermsAndConditions
+          variant="modal"
+          hasAccepted={termsAccepted}
+          onAgree={handleTermsAgreed}
+          onBack={() => setIsTermsModalOpen(false)}
+        />
       )}
 
       <SettingsModal
@@ -48,9 +76,9 @@ function ArziBolShell() {
 
 export function App() {
   return (
-    <ErrorProvider>
+    <GlobalErrorProvider>
       <ArziBolShell />
-    </ErrorProvider>
+    </GlobalErrorProvider>
   );
 }
 

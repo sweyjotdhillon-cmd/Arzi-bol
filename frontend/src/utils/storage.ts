@@ -3,9 +3,9 @@ export type LlmProvider = 'gemini' | 'openai' | 'anthropic' | 'openrouter';
 export const DEFAULT_LLM_PROVIDER: LlmProvider = 'gemini';
 
 export const DEFAULT_MODEL_BY_PROVIDER: Record<LlmProvider, string> = {
-  gemini: 'gemini-3.8-flash',
-  openai: 'gpt-4o',
-  anthropic: 'claude-3-5-sonnet-20241022',
+  gemini: 'gemini-1.5-flash',
+  openai: 'gpt-6.1-sol',
+  anthropic: 'claude-sonnet-5-5',
   openrouter: 'google/gemini-flash-1.5',
 };
 

@@ -116,9 +116,21 @@ function sanitizeLanguage(rawLanguage: unknown): string {
 }
 
 function resolveLlmProvider(rawProvider: unknown): LlmProvider {
-  if (typeof rawProvider !== 'string') return DEFAULT_LLM_PROVIDER;
-  const normalized = rawProvider.trim().toLowerCase();
-  return PROVIDER_MAP[normalized] ?? DEFAULT_LLM_PROVIDER;
+  if (rawProvider === undefined || rawProvider === null) {
+    return DEFAULT_LLM_PROVIDER;
+  }
+  if (typeof rawProvider !== 'string') {
+    throw new ApiHttpError('Invalid or unsupported LLM provider', 400);
+  }
+  const trimmed = rawProvider.trim();
+  if (!trimmed) {
+    return DEFAULT_LLM_PROVIDER;
+  }
+  const resolved = PROVIDER_MAP[trimmed.toLowerCase()];
+  if (!resolved) {
+    throw new ApiHttpError('Invalid or unsupported LLM provider', 400);
+  }
+  return resolved;
 }
 
 function resolveLlmModel(rawModel: unknown, provider: LlmProvider): string {
@@ -158,7 +170,9 @@ function buildCorsHeaders(request: Request, env: Env): Record<string, string> {
   const url = new URL(request.url);
   const rawAllowed = (env.ALLOWED_ORIGIN || '').trim();
   const isLocalHost =
-    url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+    url.hostname === 'localhost' ||
+    url.hostname === '127.0.0.1' ||
+    url.hostname === 'worker';
 
   let allowOrigin = url.origin;
   if (rawAllowed) {
@@ -215,7 +229,7 @@ async function fetchWithTimeout(
   url: string,
   init: RequestInit,
   providerKey: LlmProvider | 'sarvam',
-  secretsToRedact: string[] = []
+  _secretsToRedact: string[] = []
 ): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
@@ -266,11 +280,15 @@ async function throwForUpstreamError(
 
 async function transcribeWithSarvam(
   audioFile: Blob,
-  fileName: string,
   sarvamKey: string
 ): Promise<{ transcript: string; language: string }> {
+  const wavBlob =
+    audioFile.type === 'audio/wav'
+      ? audioFile
+      : new Blob([audioFile], { type: 'audio/wav' });
+
   const sarvamForm = new FormData();
-  sarvamForm.append('file', audioFile, fileName || 'recording.wav');
+  sarvamForm.append('file', wavBlob, 'recording.wav');
   sarvamForm.append('model', 'saaras:v4');
   sarvamForm.append('mode', 'transcribe');
 
@@ -319,6 +337,26 @@ async function draftPetitionWithLlm(
 
   switch (llmProvider) {
     case 'OpenAI': {
+      const isReasoningModel = /^o[13](-|$)/i.test(modelName);
+      const openAiPayload = isReasoningModel
+        ? {
+            model: modelName,
+            messages: [
+              {
+                role: 'user',
+                content: `${LEGAL_SYSTEM_PROMPT}\n\n${userPrompt}`,
+              },
+            ],
+          }
+        : {
+            model: modelName,
+            temperature: 0.2,
+            messages: [
+              { role: 'system', content: LEGAL_SYSTEM_PROMPT },
+              { role: 'user', content: userPrompt },
+            ],
+          };
+
       const response = await fetchWithTimeout(
         'https://api.openai.com/v1/chat/completions',
         {
@@ -327,14 +365,7 @@ async function draftPetitionWithLlm(
             'Content-Type': 'application/json',
             Authorization: `Bearer ${llmApiKey}`,
           },
-          body: JSON.stringify({
-            model: modelName,
-            temperature: 0.2,
-            messages: [
-              { role: 'system', content: LEGAL_SYSTEM_PROMPT },
-              { role: 'user', content: userPrompt },
-            ],
-          }),
+          body: JSON.stringify(openAiPayload),
         },
         'OpenAI',
         [llmApiKey]
@@ -349,44 +380,6 @@ async function draftPetitionWithLlm(
       const legalPetition = typeof content === 'string' ? content.trim() : '';
       if (!legalPetition) {
         throw new ApiHttpError('OpenAI API Error: Empty response received.', 502);
-      }
-      return legalPetition;
-    }
-
-    case 'OpenRouter': {
-      const response = await fetchWithTimeout(
-        'https://openrouter.ai/api/v1/chat/completions',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${llmApiKey}`,
-          },
-          body: JSON.stringify({
-            model: modelName,
-            temperature: 0.2,
-            messages: [
-              { role: 'system', content: LEGAL_SYSTEM_PROMPT },
-              { role: 'user', content: userPrompt },
-            ],
-          }),
-        },
-        'OpenRouter',
-        [llmApiKey]
-      );
-      if (!response.ok) {
-        await throwForUpstreamError(response, 'OpenRouter', [llmApiKey]);
-      }
-      const data = (await response.json()) as {
-        choices?: Array<{ message?: { content?: unknown } }>;
-      };
-      const content = data?.choices?.[0]?.message?.content;
-      const legalPetition = typeof content === 'string' ? content.trim() : '';
-      if (!legalPetition) {
-        throw new ApiHttpError(
-          'OpenRouter API Error: Empty response received.',
-          502
-        );
       }
       return legalPetition;
     }
@@ -438,8 +431,45 @@ async function draftPetitionWithLlm(
       return legalPetition;
     }
 
-    case 'Gemini':
-    default: {
+    case 'OpenRouter': {
+      const response = await fetchWithTimeout(
+        'https://openrouter.ai/api/v1/chat/completions',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${llmApiKey}`,
+          },
+          body: JSON.stringify({
+            model: modelName,
+            temperature: 0.2,
+            messages: [
+              { role: 'system', content: LEGAL_SYSTEM_PROMPT },
+              { role: 'user', content: userPrompt },
+            ],
+          }),
+        },
+        'OpenRouter',
+        [llmApiKey]
+      );
+      if (!response.ok) {
+        await throwForUpstreamError(response, 'OpenRouter', [llmApiKey]);
+      }
+      const data = (await response.json()) as {
+        choices?: Array<{ message?: { content?: unknown } }>;
+      };
+      const content = data?.choices?.[0]?.message?.content;
+      const legalPetition = typeof content === 'string' ? content.trim() : '';
+      if (!legalPetition) {
+        throw new ApiHttpError(
+          'OpenRouter API Error: Empty response received.',
+          502
+        );
+      }
+      return legalPetition;
+    }
+
+    case 'Gemini': {
       const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
         modelName
       )}:generateContent?key=${encodeURIComponent(llmApiKey)}`;
@@ -488,6 +518,10 @@ async function draftPetitionWithLlm(
         throw new ApiHttpError('Gemini API Error: Empty response received.', 502);
       }
       return legalPetition;
+    }
+
+    default: {
+      throw new ApiHttpError('Invalid or unsupported LLM provider', 400);
     }
   }
 }
@@ -557,7 +591,7 @@ async function handleProcessAudio(
       ? requestSarvamKey
       : envSarvamKey;
 
-    const llmProvider = resolveLlmProvider(getFormString(formData, 'llmProvider'));
+    const llmProvider = resolveLlmProvider(formData.get('llmProvider'));
     const requestLlmKey = getFormString(formData, 'llmApiKey', 'geminiKey');
     const envGeminiKey = (env.GEMINI_API_KEY || '').trim();
     const llmApiKey = isValidKey(requestLlmKey)
@@ -578,7 +612,6 @@ async function handleProcessAudio(
 
     const { transcript, language } = await transcribeWithSarvam(
       audioFile,
-      audioFile.name || 'recording.wav',
       sarvamKey
     );
 

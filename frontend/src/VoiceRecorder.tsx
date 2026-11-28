@@ -198,8 +198,12 @@ export function VoiceRecorder({
       clearError();
 
       const formData = new FormData();
-      const extension = resolveAudioExtension(audioBlob.type || 'audio/webm');
-      formData.append('audio', audioBlob, `recording.${extension}`);
+      const mimeType = audioBlob.type || 'audio/webm';
+      const typedBlob = audioBlob.type
+        ? audioBlob
+        : new Blob([audioBlob], { type: mimeType });
+      const extension = resolveAudioExtension(mimeType);
+      formData.append('audio', typedBlob, `recording.${extension}`);
 
       const { sarvamKey, llmProvider, llmApiKey, llmModel } =
         loadStoredApiSettings();

@@ -127,7 +127,7 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
   const [selectedModelOption, setSelectedModelOption] = useState<string>(
     MODEL_REGISTRY.Gemini[0]
   );
-  const [customModel, setCustomModel] = useState('');
+  const [customModelText, setCustomModelText] = useState('');
   const [modelError, setModelError] = useState<string | null>(null);
   const [showSarvamKey, setShowSarvamKey] = useState(false);
   const [showLlmKey, setShowLlmKey] = useState(false);
@@ -144,6 +144,11 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
 
   useEffect(() => {
     if (!isOpen) return;
+    if (closeTimeoutRef.current !== null) {
+      window.clearTimeout(closeTimeoutRef.current);
+      closeTimeoutRef.current = null;
+    }
+
     const stored = loadStoredApiKeys();
     setSarvamApiKey(stored.sarvamApiKey);
     setLlmProvider(stored.llmProvider);
@@ -153,13 +158,13 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
     const providerModels = getModelsForProvider(stored.llmProvider);
     if (storedModel && isPresetModel(stored.llmProvider, storedModel)) {
       setSelectedModelOption(storedModel);
-      setCustomModel('');
+      setCustomModelText('');
     } else if (storedModel) {
       setSelectedModelOption(CUSTOM_MODEL_OPTION);
-      setCustomModel(storedModel);
+      setCustomModelText(storedModel);
     } else {
       setSelectedModelOption(providerModels[0]);
-      setCustomModel('');
+      setCustomModelText('');
     }
     setModelError(null);
     setSavedFeedback(false);
@@ -189,15 +194,18 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
     const nextModels = getModelsForProvider(nextProvider);
     setLlmProvider(nextProvider);
     setSelectedModelOption(nextModels[0]);
-    setCustomModel('');
+    // Immediately clear custom model text so old custom models never bleed into a new provider
+    setCustomModelText('');
     setModelError(null);
+    setSavedFeedback(false);
   };
 
   const handleModelOptionChange = (nextModel: string) => {
     setSelectedModelOption(nextModel);
     setModelError(null);
+    setSavedFeedback(false);
     if (nextModel !== CUSTOM_MODEL_OPTION) {
-      setCustomModel('');
+      setCustomModelText('');
     }
   };
 
@@ -205,7 +213,9 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
     event.preventDefault();
     const trimmedSarvam = sarvamApiKey.trim();
     const trimmedLlmKey = llmApiKey.trim();
-    const sanitizedCustomModel = customModel.replace(/[\r\n\t\0]/g, '').trim();
+    const sanitizedCustomModel = customModelText
+      .replace(/[\r\n\t\0]/g, '')
+      .trim();
     const resolvedModel = isCustomModelSelected
       ? sanitizedCustomModel
       : selectedModelOption.trim();
@@ -425,14 +435,15 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
                 <input
                   id="llm-custom-model-name"
                   type="text"
-                  value={customModel}
+                  value={customModelText}
                   onChange={(e) => {
-                    setCustomModel(e.target.value);
+                    setCustomModelText(e.target.value);
                     if (modelError) setModelError(null);
                   }}
                   placeholder={activeProviderMeta.modelPlaceholder}
                   autoComplete="off"
                   spellCheck={false}
+                  autoFocus
                   className="w-full rounded-xl border border-slate-300 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-600 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20"
                 />
               </div>

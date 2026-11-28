@@ -36,7 +36,7 @@ const API_PROCESS_AUDIO_PATH = '/api/process-audio';
 const WAV_PROCESSOR_BUFFER_SIZE = 4096;
 
 const DENIED_ERROR_MESSAGE =
-  'Microphone access blocked. Please check browser permissions (Brave Shields or Safari Privacy).';
+  'Microphone access blocked. Please disable Brave Shields or grant browser permissions.';
 
 const INSECURE_CONTEXT_MESSAGE = 'Microphone requires HTTPS or localhost.';
 
@@ -350,7 +350,7 @@ export function VoiceRecorder({
 
         setRecordedBlob(null);
         setRecorderState('idle');
-        onRecordingCompleteRef.current(audioBlob, payload);
+        onRecordingCompleteRef.current(wavBlob, payload);
       } catch (err: unknown) {
         if (!isMountedRef.current) return;
 
@@ -478,7 +478,7 @@ export function VoiceRecorder({
       let stream: MediaStream;
       try {
         if (audioContext.state === 'suspended') {
-          await audioContext.resume(); // CRITICAL for Safari/iOS
+          await audioContext.resume();
         }
         stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       } catch (err: unknown) {
@@ -486,24 +486,21 @@ export function VoiceRecorder({
         if (!isMountedRef.current) return;
 
         const errorName =
-          err instanceof DOMException || err instanceof Error ? err.name : '';
+          err &&
+          typeof err === 'object' &&
+          'name' in err &&
+          typeof (err as { name: unknown }).name === 'string'
+            ? (err as { name: string }).name
+            : '';
 
         if (
           errorName === 'NotAllowedError' ||
-          errorName === 'PermissionDeniedError'
-        ) {
-          showError(DENIED_ERROR_MESSAGE);
-          setRecorderState('denied');
-          setErrorMessage(DENIED_ERROR_MESSAGE);
-          return;
-        }
-
-        if (
+          errorName === 'PermissionDeniedError' ||
           errorName === 'NotFoundError' ||
           errorName === 'DevicesNotFoundError'
         ) {
           showError(DENIED_ERROR_MESSAGE);
-          setRecorderState('error');
+          setRecorderState('denied');
           setErrorMessage(DENIED_ERROR_MESSAGE);
           return;
         }
@@ -540,14 +537,14 @@ export function VoiceRecorder({
 
       mediaStreamRef.current = stream;
 
-      if (!isMountedRef.current) {
-        teardownAudioGraph();
-        return;
-      }
-
-      sampleRateRef.current = audioContext.sampleRate;
-
       try {
+        // Re-verify AudioContext is running after native permission prompt on iOS Safari
+        if (audioContext.state === 'suspended') {
+          await audioContext.resume();
+        }
+
+        sampleRateRef.current = audioContext.sampleRate;
+
         const sourceNode = audioContext.createMediaStreamSource(stream);
         const processorNode = audioContext.createScriptProcessor(
           WAV_PROCESSOR_BUFFER_SIZE,
@@ -652,8 +649,8 @@ export function VoiceRecorder({
       return;
     }
 
-    // iOS/Safari Fix: AudioContext starts in 'suspended' state on iOS and must
-    // be explicitly resumed inside the exact onClick handler before getUserMedia.
+    // Safari/iOS Constraint: AudioContext must be initialized and resumed
+    // strictly inside the record button onClick event handler.
     let audioContext: AudioContext;
     try {
       audioContext = new AudioContextCtor();
@@ -709,7 +706,7 @@ export function VoiceRecorder({
       {!isSecureContextAvailable ? (
         <div
           role="alert"
-          className="my-4 w-full max-w-md rounded-2xl border border-amber-300 bg-amber-50 p-4 text-center text-xs text-amber-900 shadow-sm sm:text-sm"
+          className="my-4 w-full max-w-md rounded-2xl border-2 border-amber-400 bg-amber-50 p-4 text-center text-xs text-amber-900 shadow-md sm:text-sm"
         >
           <div className="flex flex-col items-center gap-2">
             <MicOff className="h-8 w-8 text-amber-700" aria-hidden="true" />
@@ -843,51 +840,51 @@ export function VoiceRecorder({
       {/* Status caption */}
       {isSecureContextAvailable && (
         <div className="mt-4 text-center">
-        <p className="text-base font-bold tracking-tight text-slate-900 sm:text-lg">
-          {isRecording && 'Recording in progress... Tap to stop'}
-          {isProcessing && 'Transcribing & drafting legal petition...'}
-          {isRequesting && 'Waiting for microphone permission...'}
-          {isDenied && 'Microphone Access Denied'}
-          {isError && 'Could Not Process Recording'}
-          {isUnsupported && 'Microphone Unavailable'}
-          {!isProcessing &&
-            !isError &&
-            recordedBlob &&
-            'Recording captured and ready'}
-          {recorderState === 'idle' &&
-            !recordedBlob &&
-            (disabled
-              ? 'Accept Terms & Conditions to unlock microphone'
-              : 'Tap the microphone to record your grievance')}
-        </p>
-        <p className="mt-1 text-xs text-slate-600 sm:text-sm">
-          {isRecording
-            ? `Auto-stops in ${formatCountdown(secondsRemaining)} (60s max)`
-            : isProcessing
-              ? 'Connecting to speech-to-text and BNS legal drafting engine'
-              : recordedBlob
-                ? 'Review your choice below to draft the FIR petition or re-record'
-                : disabled
-                  ? 'Click "Review & Accept Terms" below or try an example chip'
-                  : 'Supports Hindi, Punjabi, English & regional languages (60s max)'}
-        </p>
+          <p className="text-base font-bold tracking-tight text-slate-900 sm:text-lg">
+            {isRecording && 'Recording in progress... Tap to stop'}
+            {isProcessing && 'Transcribing & drafting legal petition...'}
+            {isRequesting && 'Waiting for microphone permission...'}
+            {isDenied && 'Microphone Access Blocked'}
+            {isError && 'Could Not Process Recording'}
+            {isUnsupported && 'Microphone Unavailable'}
+            {!isProcessing &&
+              !isError &&
+              recordedBlob &&
+              'Recording captured and ready'}
+            {recorderState === 'idle' &&
+              !recordedBlob &&
+              (disabled
+                ? 'Accept Terms & Conditions to unlock microphone'
+                : 'Tap the microphone to record your grievance')}
+          </p>
+          <p className="mt-1 text-xs text-slate-600 sm:text-sm">
+            {isRecording
+              ? `Auto-stops in ${formatCountdown(secondsRemaining)} (60s max)`
+              : isProcessing
+                ? 'Connecting to speech-to-text and BNS legal drafting engine'
+                : recordedBlob
+                  ? 'Review your choice below to draft the FIR petition or re-record'
+                  : disabled
+                    ? 'Click "Review & Accept Terms" below or try an example chip'
+                    : 'Supports Hindi, Punjabi, English & regional languages (60s max)'}
+          </p>
         </div>
       )}
 
-      {/* Persistent error banner (Denied / Processing Errors) */}
+      {/* Highly visible error banner (Brave Shields / Permission Denied / Processing Errors) */}
       {isSecureContextAvailable && errorMessage && (
         <div
           role="alert"
           aria-live="assertive"
-          className="mt-4 w-full max-w-md rounded-2xl border border-red-300 bg-red-50 p-4 text-left text-xs text-red-900 shadow-sm sm:text-sm"
+          className="mt-4 w-full max-w-md rounded-2xl border-2 border-red-400 bg-red-50 p-4 text-left text-xs text-red-900 shadow-md sm:text-sm"
         >
           <div className="flex items-start gap-2.5">
             <AlertTriangle
-              className="mt-0.5 h-4 w-4 shrink-0 text-red-600"
+              className="mt-0.5 h-5 w-5 shrink-0 text-red-600"
               aria-hidden="true"
             />
             <div className="flex-1">
-              <p className="font-semibold leading-relaxed">{errorMessage}</p>
+              <p className="font-bold leading-relaxed">{errorMessage}</p>
               {(isDenied || (isError && !recordedBlob)) && (
                 <button
                   type="button"

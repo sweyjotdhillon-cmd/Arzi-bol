@@ -1,25 +1,14 @@
 services:
-  backend:
+  arzi-bol:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
-    ports:
-      - "3001:3001"
-    environment:
-      - PORT=${PORT:-3001}
-      - NODE_ENV=${NODE_ENV:-production}
-      - SARVAM_API_KEY=${SARVAM_API_KEY:-}
-      - ALLOWED_ORIGIN=${ALLOWED_ORIGIN:-http://localhost:8080}
-    restart: unless-stopped
-
-  frontend:
-    build:
-      context: ./frontend
+      context: .
       dockerfile: Dockerfile
       args:
         - VITE_API_URL=${VITE_API_URL:-/api}
     ports:
-      - "8080:80"
-    depends_on:
-      - backend
+      - "8788:8788"
+    environment:
+      - SARVAM_API_KEY=${SARVAM_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - ALLOWED_ORIGIN=${ALLOWED_ORIGIN:-http://localhost:8788}
     restart: unless-stopped

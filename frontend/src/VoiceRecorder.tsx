@@ -36,7 +36,7 @@ const API_PROCESS_AUDIO_PATH = '/api/process-audio';
 const WAV_PROCESSOR_BUFFER_SIZE = 4096;
 
 const DENIED_ERROR_MESSAGE =
-  'Microphone access blocked. Click the lock icon (🔒) in your URL bar to allow access, then click Retry.';
+  'Microphone access blocked. Please check browser permissions.';
 
 const INSECURE_CONTEXT_MESSAGE = 'Microphone requires HTTPS or localhost.';
 
@@ -494,10 +494,29 @@ export function VoiceRecorder({
     setSecondsRemaining(MAX_RECORDING_SECONDS);
     pcmChannelChunksRef.current = [[]];
 
+    // Safari (macOS/iOS) requires AudioContext creation & resume() inside the
+    // synchronous user-gesture call stack before awaiting getUserMedia().
+    let audioContext: AudioContext;
+    try {
+      audioContext = new AudioContextCtor();
+      if (audioContext.state === 'suspended') {
+        void audioContext.resume().catch(() => {});
+      }
+      audioContextRef.current = audioContext;
+    } catch {
+      teardownAudioGraph();
+      setRecorderState('unsupported');
+      setErrorMessage(
+        'Could not initialize audio recorder on this browser. Please try an example below.'
+      );
+      return;
+    }
+
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (err: unknown) {
+      teardownAudioGraph();
       if (!isMountedRef.current) return;
 
       const errorName = err instanceof DOMException ? err.name : '';
@@ -548,14 +567,13 @@ export function VoiceRecorder({
 
     if (!isMountedRef.current) {
       stream.getTracks().forEach((track) => track.stop());
+      teardownAudioGraph();
       return;
     }
 
     mediaStreamRef.current = stream;
 
-    let audioContext: AudioContext;
     try {
-      audioContext = new AudioContextCtor();
       if (audioContext.state === 'suspended') {
         await audioContext.resume();
       }
@@ -569,12 +587,10 @@ export function VoiceRecorder({
     }
 
     if (!isMountedRef.current) {
-      audioContext.close().catch(() => {});
-      stopStreamTracks();
+      teardownAudioGraph();
       return;
     }
 
-    audioContextRef.current = audioContext;
     sampleRateRef.current = audioContext.sampleRate;
 
     try {
@@ -683,12 +699,35 @@ export function VoiceRecorder({
   const isError = recorderState === 'error';
   const isDenied = recorderState === 'denied';
   const isUnsupported = recorderState === 'unsupported';
+  const isSecureContextAvailable =
+    typeof window !== 'undefined' && window.isSecureContext;
   const isButtonDisabled =
     disabled || isRequesting || isProcessing || isUnsupported;
 
   return (
     <div className="flex w-full flex-col items-center justify-center">
-      {recordedBlob ? (
+      {!isSecureContextAvailable ? (
+        <div
+          role="alert"
+          className="my-4 w-full max-w-md rounded-2xl border border-amber-300 bg-amber-50 p-4 text-center text-xs text-amber-900 shadow-sm sm:text-sm"
+        >
+          <div className="flex flex-col items-center gap-2">
+            <MicOff className="h-8 w-8 text-amber-700" aria-hidden="true" />
+            <p className="font-bold">Microphone Unavailable (Insecure Context)</p>
+            <p className="leading-relaxed">
+              {INSECURE_CONTEXT_MESSAGE} Please open Arzi-Bol over{' '}
+              <code className="rounded bg-amber-100 px-1 py-0.5 font-mono">
+                https://
+              </code>{' '}
+              or{' '}
+              <code className="rounded bg-amber-100 px-1 py-0.5 font-mono">
+                http://localhost
+              </code>
+              , or select an example below.
+            </p>
+          </div>
+        </div>
+      ) : recordedBlob ? (
         <div className="flex w-full max-w-md flex-col items-center justify-center gap-3 py-4">
           <button
             type="button"
@@ -802,7 +841,8 @@ export function VoiceRecorder({
       )}
 
       {/* Status caption */}
-      <div className="mt-4 text-center">
+      {isSecureContextAvailable && (
+        <div className="mt-4 text-center">
         <p className="text-base font-bold tracking-tight text-slate-900 sm:text-lg">
           {isRecording && 'Recording in progress... Tap to stop'}
           {isProcessing && 'Transcribing & drafting legal petition...'}
@@ -831,10 +871,11 @@ export function VoiceRecorder({
                   ? 'Click "Review & Accept Terms" below or try an example chip'
                   : 'Supports Hindi, Punjabi, English & regional languages (60s max)'}
         </p>
-      </div>
+        </div>
+      )}
 
-      {/* Persistent error banner (Denied / Insecure Context / Processing Errors) */}
-      {errorMessage && (
+      {/* Persistent error banner (Denied / Processing Errors) */}
+      {isSecureContextAvailable && errorMessage && (
         <div
           role="alert"
           aria-live="assertive"

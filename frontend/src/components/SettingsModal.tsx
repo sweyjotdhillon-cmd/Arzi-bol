@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { CheckCircle2, Eye, EyeOff, KeyRound, ShieldCheck, X } from 'lucide-react';
 import { useGlobalError } from './GlobalErrorState';
 import {
@@ -73,6 +73,15 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
   const [showSarvamKey, setShowSarvamKey] = useState(false);
   const [showLlmKey, setShowLlmKey] = useState(false);
   const [savedFeedback, setSavedFeedback] = useState(false);
+  const closeTimeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (closeTimeoutRef.current !== null) {
+        window.clearTimeout(closeTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -147,7 +156,11 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
       };
       onSaved?.(updated);
       setSavedFeedback(true);
-      window.setTimeout(() => {
+      if (closeTimeoutRef.current !== null) {
+        window.clearTimeout(closeTimeoutRef.current);
+      }
+      closeTimeoutRef.current = window.setTimeout(() => {
+        closeTimeoutRef.current = null;
         onClose();
       }, 650);
     } catch {

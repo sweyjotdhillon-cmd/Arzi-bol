@@ -34,19 +34,24 @@ export function LegalPetitionView({
     }
   };
 
-  const handleDownload = () => {
+  const handleDownloadDoc = () => {
     if (!result?.legal_petition) return;
     const blob = new Blob([result.legal_petition], {
-      type: 'text/plain;charset=utf-8',
+      type: 'text/markdown;charset=utf-8',
     });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'arzi-bol-legal-petition.txt';
+    link.download = 'arzi-bol-legal-petition.md';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+  };
+
+  const handlePrintPdf = () => {
+    if (!result?.legal_petition || typeof window === 'undefined') return;
+    window.print();
   };
 
   if (isProcessing) {
@@ -137,11 +142,20 @@ export function LegalPetitionView({
 
             <button
               type="button"
-              onClick={handleDownload}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
+              onClick={handleDownloadDoc}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800 transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
             >
               <Download className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>Download .txt</span>
+              <span>Download Doc</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handlePrintPdf}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
+            >
+              <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>Save PDF</span>
             </button>
           </div>
         </div>

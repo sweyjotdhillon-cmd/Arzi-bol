@@ -1,9 +1,18 @@
 {
   "name": "arzi-bol",
+  "main": "./worker/index.ts",
   "compatibility_date": "2025-02-14",
   "assets": {
     "directory": "./frontend/dist",
-    "not_found_handling": "single-page-application"
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/health"]
+  },
+  "observability": {
+    "enabled": true,
+    "traces": {
+      "enabled": true
+    }
   },
   "previews": {}
 }

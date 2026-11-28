@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import axios from 'axios';
 import {
   AlertTriangle,
   FileText,
@@ -98,14 +97,6 @@ function resolveSupportedMimeType(): string | undefined {
   return undefined;
 }
 
-function resolveAudioExtension(mimeType: string): string {
-  const lower = mimeType.toLowerCase();
-  if (lower.includes('mp4')) return 'mp4';
-  if (lower.includes('ogg')) return 'ogg';
-  if (lower.includes('wav')) return 'wav';
-  return 'webm';
-}
-
 function getInitialSupportError(): {
   state: RecorderState;
   message: string | null;
@@ -202,43 +193,57 @@ export function VoiceRecorder({
       const typedBlob = audioBlob.type
         ? audioBlob
         : new Blob([audioBlob], { type: mimeType });
-      const extension = resolveAudioExtension(mimeType);
-      formData.append('audio', typedBlob, `recording.${extension}`);
+      formData.append('file', typedBlob, 'recording.webm');
 
       const { sarvamKey, llmProvider, llmApiKey, llmModel } =
         loadStoredApiSettings();
       formData.append('llmProvider', llmProvider);
       formData.append('llmModel', llmModel);
       if (sarvamKey) {
-        formData.append('sarvamKey', sarvamKey);
+        formData.append('SARVAM_API_KEY', sarvamKey);
       }
       if (llmApiKey) {
         formData.append('llmApiKey', llmApiKey);
       }
 
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 60000);
+
       try {
-        const response = await axios.post<LegalPetitionResult>(
-          API_PROCESS_AUDIO_PATH,
-          formData,
-          { timeout: 60000 }
-        );
+        const response = await fetch(API_PROCESS_AUDIO_PATH, {
+          method: 'POST',
+          body: formData,
+          signal: controller.signal,
+        });
+
+        const payload = (await response.json().catch(() => null)) as
+          | (LegalPetitionResult & { error?: unknown })
+          | null;
+
+        if (!response.ok) {
+          const serverError =
+            payload && typeof payload.error === 'string' && payload.error.trim()
+              ? payload.error.trim()
+              : `Request failed with status ${response.status}.`;
+          throw new Error(serverError);
+        }
+
+        if (!payload) {
+          throw new Error('Empty response received from server.');
+        }
 
         if (!isMountedRef.current) return;
 
         setRecordedBlob(null);
         setRecorderState('idle');
-        onRecordingCompleteRef.current(audioBlob, response.data);
+        onRecordingCompleteRef.current(audioBlob, payload);
       } catch (err: unknown) {
         if (!isMountedRef.current) return;
 
-        let rawError: unknown = err;
-        if (axios.isAxiosError(err)) {
-          const serverError = (err.response?.data as { error?: unknown } | undefined)
-            ?.error;
-          if (typeof serverError === 'string' && serverError.trim()) {
-            rawError = serverError.trim();
-          }
-        }
+        const rawError =
+          err instanceof Error && err.name === 'AbortError'
+            ? 'Request timed out. Please try again.'
+            : err;
 
         const cleanMessage = maskErrorMessage(
           rawError,
@@ -247,6 +252,8 @@ export function VoiceRecorder({
         showError(cleanMessage);
         setRecorderState('error');
         setErrorMessage(cleanMessage);
+      } finally {
+        window.clearTimeout(timeoutId);
       }
     },
     [clearError, showError]

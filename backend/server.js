@@ -16,10 +16,13 @@ const envSarvamKey = (process.env.SARVAM_API_KEY || '').trim();
 const envGeminiKey = (process.env.GEMINI_API_KEY || '').trim();
 
 function isValidKey(value) {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
   return (
-    typeof value === 'string' &&
-    value.trim().length > 0 &&
-    value.trim() !== 'your_key_here'
+    trimmed.length > 0 &&
+    trimmed !== 'your_key_here' &&
+    trimmed !== 'undefined' &&
+    trimmed !== 'null'
   );
 }
 
@@ -283,16 +286,10 @@ app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
 
     const geminiModel = resolveGeminiModel(req.body?.geminiModel);
 
-    // Keyless fallback: if SARVAM_API_KEY is absent, bypass all Axios calls and return demo JSON after 2s
-    if (!isValidKey(sarvamKey)) {
+    // Keyless fallback: if Sarvam or Gemini key is missing/invalid, bypass all Axios calls and return demo JSON after 2s
+    if (!isValidKey(sarvamKey) || !isValidKey(geminiKey)) {
       await delay(2000);
       return res.status(200).json(DEMO_RESPONSE);
-    }
-
-    if (!isValidKey(geminiKey)) {
-      return res.status(400).json({
-        error: 'Gemini API key is required. Please configure it in Settings.',
-      });
     }
 
     const { transcript, language } = await transcribeWithSarvam(
@@ -350,7 +347,7 @@ app.post('/api/process-text', async (req, res) => {
       : envGeminiKey;
     const geminiModel = resolveGeminiModel(req.body?.geminiModel);
 
-    if (!HAS_ENV_SARVAM_KEY || !isValidKey(geminiKey)) {
+    if (!isValidKey(geminiKey)) {
       await delay(2000);
       return res.status(200).json(DEMO_RESPONSE);
     }

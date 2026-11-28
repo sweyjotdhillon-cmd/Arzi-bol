@@ -13,6 +13,7 @@ import {
 import { useGlobalError } from './components/GlobalErrorState';
 import type { ExamplePrompt, LegalPetitionResult } from './types';
 import { maskErrorMessage } from './utils/errorMasking';
+import { loadStoredApiSettings } from './utils/storage';
 
 export type RecorderState =
   | 'idle'
@@ -26,18 +27,13 @@ export type RecorderState =
 export interface VoiceRecorderProps {
   onRecordingComplete: (audioBlob: Blob, result?: LegalPetitionResult) => void;
   onExampleSelect?: (example: ExamplePrompt) => void;
+  onDiscard?: () => void;
   disabled?: boolean;
+  isProcessingExternal?: boolean;
 }
 
 const MAX_RECORDING_SECONDS = 60;
-const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
 const API_PROCESS_AUDIO_PATH = '/api/process-audio';
-
-const STORAGE_KEYS = {
-  sarvam: 'arzi_bol_sarvam_api_key',
-  gemini: 'arzi_bol_gemini_api_key',
-  geminiModel: 'arzi_bol_gemini_model',
-} as const;
 
 const DENIED_ERROR_MESSAGE =
   'Microphone access blocked. Click the lock icon (🔒) in your URL bar to allow access, then click Retry.';
@@ -51,7 +47,6 @@ const PREFERRED_MIME_TYPES = [
   'audio/mp4',
   'audio/ogg;codecs=opus',
   'audio/ogg',
-  'audio/wav',
 ] as const;
 
 export const FALLBACK_EXAMPLES: readonly ExamplePrompt[] = [
@@ -111,30 +106,6 @@ function resolveAudioExtension(mimeType: string): string {
   return 'webm';
 }
 
-function loadStoredSettings(): {
-  sarvamKey: string;
-  geminiKey: string;
-  geminiModel: string;
-} {
-  try {
-    const sarvamKey =
-      window.localStorage.getItem(STORAGE_KEYS.sarvam)?.trim() ?? '';
-    const geminiKey =
-      window.localStorage.getItem(STORAGE_KEYS.gemini)?.trim() ?? '';
-    const geminiModel =
-      window.localStorage.getItem(STORAGE_KEYS.geminiModel)?.trim() ||
-      DEFAULT_GEMINI_MODEL;
-
-    return { sarvamKey, geminiKey, geminiModel };
-  } catch {
-    return {
-      sarvamKey: '',
-      geminiKey: '',
-      geminiModel: DEFAULT_GEMINI_MODEL,
-    };
-  }
-}
-
 function getInitialSupportError(): {
   state: RecorderState;
   message: string | null;
@@ -166,7 +137,9 @@ function getInitialSupportError(): {
 export function VoiceRecorder({
   onRecordingComplete,
   onExampleSelect,
+  onDiscard,
   disabled = false,
+  isProcessingExternal = false,
 }: VoiceRecorderProps) {
   const { showError, clearError } = useGlobalError();
   const initialSupport = getInitialSupportError();
@@ -228,7 +201,7 @@ export function VoiceRecorder({
       const extension = resolveAudioExtension(audioBlob.type || 'audio/webm');
       formData.append('audio', audioBlob, `recording.${extension}`);
 
-      const { sarvamKey, geminiKey, geminiModel } = loadStoredSettings();
+      const { sarvamKey, geminiKey, geminiModel } = loadStoredApiSettings();
       formData.append('geminiModel', geminiModel);
       if (sarvamKey) {
         formData.append('sarvamKey', sarvamKey);
@@ -603,6 +576,7 @@ export function VoiceRecorder({
     clearError();
     setRecorderState('idle');
     setSecondsRemaining(MAX_RECORDING_SECONDS);
+    onDiscard?.();
   };
 
   const isRequesting = recorderState === 'requesting';
@@ -744,7 +718,9 @@ export function VoiceRecorder({
             'Recording captured and ready'}
           {recorderState === 'idle' &&
             !recordedBlob &&
-            'Tap the microphone to record your grievance'}
+            (disabled
+              ? 'Accept Terms & Conditions to unlock microphone'
+              : 'Tap the microphone to record your grievance')}
         </p>
         <p className="mt-1 text-xs text-slate-600 sm:text-sm">
           {isRecording
@@ -753,7 +729,9 @@ export function VoiceRecorder({
               ? 'Connecting to speech-to-text and BNS legal drafting engine'
               : recordedBlob
                 ? 'Review your choice below to draft the FIR petition or re-record'
-                : 'Supports Hindi, Punjabi, English & regional languages (60s max)'}
+                : disabled
+                  ? 'Click "Review & Accept Terms" below or try an example chip'
+                  : 'Supports Hindi, Punjabi, English & regional languages (60s max)'}
         </p>
       </div>
 
@@ -800,8 +778,9 @@ export function VoiceRecorder({
               <button
                 key={example.id}
                 type="button"
+                disabled={isProcessing || isProcessingExternal}
                 onClick={() => handleExampleClick(example)}
-                className={`inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-xs font-medium transition focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 ${
+                className={`inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-xs font-medium transition focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 disabled:cursor-wait disabled:opacity-60 ${
                   isSelected
                     ? 'border-blue-600 bg-blue-50 text-blue-800 shadow-xs'
                     : 'border-slate-300 bg-white text-slate-700 hover:border-blue-400 hover:bg-blue-50/60 hover:text-blue-800'

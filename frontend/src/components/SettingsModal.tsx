@@ -3,19 +3,58 @@ import { CheckCircle2, Eye, EyeOff, KeyRound, ShieldCheck, X } from 'lucide-reac
 import { useGlobalError } from './GlobalErrorState';
 import {
   API_STORAGE_KEYS,
+  DEFAULT_MODEL_BY_PROVIDER,
   loadStoredApiSettings,
+  normalizeLlmProvider,
+  type LlmProvider,
 } from '../utils/storage';
 
 export interface ApiKeysConfig {
   sarvamApiKey: string;
-  geminiApiKey: string;
+  llmProvider: LlmProvider;
+  llmApiKey: string;
+  llmModel: string;
 }
 
+const PROVIDER_OPTIONS: ReadonlyArray<{
+  value: LlmProvider;
+  label: string;
+  keyPlaceholder: string;
+  modelPlaceholder: string;
+}> = [
+  {
+    value: 'gemini',
+    label: 'Gemini',
+    keyPlaceholder: 'Enter your Google Gemini API key',
+    modelPlaceholder: 'e.g. gemini-3.8-flash or gemini-1.5-pro',
+  },
+  {
+    value: 'openai',
+    label: 'OpenAI',
+    keyPlaceholder: 'Enter your OpenAI API key (sk-...)',
+    modelPlaceholder: 'e.g. gpt-4o',
+  },
+  {
+    value: 'anthropic',
+    label: 'Anthropic (Claude)',
+    keyPlaceholder: 'Enter your Anthropic API key (sk-ant-...)',
+    modelPlaceholder: 'e.g. claude-3-5-sonnet-20241022',
+  },
+  {
+    value: 'openrouter',
+    label: 'OpenRouter',
+    keyPlaceholder: 'Enter your OpenRouter API key (sk-or-...)',
+    modelPlaceholder: 'e.g. google/gemini-flash-1.5',
+  },
+];
+
 export function loadStoredApiKeys(): ApiKeysConfig {
-  const { sarvamKey, geminiKey } = loadStoredApiSettings();
+  const { sarvamKey, llmProvider, llmApiKey, llmModel } = loadStoredApiSettings();
   return {
     sarvamApiKey: sarvamKey,
-    geminiApiKey: geminiKey,
+    llmProvider,
+    llmApiKey,
+    llmModel,
   };
 }
 
@@ -28,16 +67,20 @@ interface SettingsModalProps {
 export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) {
   const { showError } = useGlobalError();
   const [sarvamApiKey, setSarvamApiKey] = useState('');
-  const [geminiApiKey, setGeminiApiKey] = useState('');
+  const [llmProvider, setLlmProvider] = useState<LlmProvider>('gemini');
+  const [llmApiKey, setLlmApiKey] = useState('');
+  const [llmModel, setLlmModel] = useState(DEFAULT_MODEL_BY_PROVIDER.gemini);
   const [showSarvamKey, setShowSarvamKey] = useState(false);
-  const [showGeminiKey, setShowGeminiKey] = useState(false);
+  const [showLlmKey, setShowLlmKey] = useState(false);
   const [savedFeedback, setSavedFeedback] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
     const stored = loadStoredApiKeys();
     setSarvamApiKey(stored.sarvamApiKey);
-    setGeminiApiKey(stored.geminiApiKey);
+    setLlmProvider(stored.llmProvider);
+    setLlmApiKey(stored.llmApiKey);
+    setLlmModel(stored.llmModel);
     setSavedFeedback(false);
   }, [isOpen]);
 
@@ -56,10 +99,25 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
     return null;
   }
 
+  const activeProviderMeta =
+    PROVIDER_OPTIONS.find((opt) => opt.value === llmProvider) ??
+    PROVIDER_OPTIONS[0];
+
+  const handleProviderChange = (nextRaw: string) => {
+    const nextProvider = normalizeLlmProvider(nextRaw);
+    const prevDefault = DEFAULT_MODEL_BY_PROVIDER[llmProvider];
+    setLlmProvider(nextProvider);
+    if (!llmModel.trim() || llmModel.trim() === prevDefault) {
+      setLlmModel(DEFAULT_MODEL_BY_PROVIDER[nextProvider]);
+    }
+  };
+
   const handleSave = (event: FormEvent) => {
     event.preventDefault();
     const trimmedSarvam = sarvamApiKey.trim();
-    const trimmedGemini = geminiApiKey.trim();
+    const trimmedLlmKey = llmApiKey.trim();
+    const trimmedModel =
+      llmModel.trim() || DEFAULT_MODEL_BY_PROVIDER[llmProvider];
 
     try {
       if (trimmedSarvam) {
@@ -68,15 +126,24 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
         window.localStorage.removeItem(API_STORAGE_KEYS.sarvam);
       }
 
-      if (trimmedGemini) {
-        window.localStorage.setItem(API_STORAGE_KEYS.gemini, trimmedGemini);
+      window.localStorage.setItem(API_STORAGE_KEYS.llmProvider, llmProvider);
+      window.localStorage.setItem(API_STORAGE_KEYS.llmModel, trimmedModel);
+
+      if (trimmedLlmKey) {
+        window.localStorage.setItem(API_STORAGE_KEYS.llmApiKey, trimmedLlmKey);
       } else {
-        window.localStorage.removeItem(API_STORAGE_KEYS.gemini);
+        window.localStorage.removeItem(API_STORAGE_KEYS.llmApiKey);
       }
+
+      // Clean up legacy Gemini-only keys so provider switches don't fall back unexpectedly
+      window.localStorage.removeItem(API_STORAGE_KEYS.gemini);
+      window.localStorage.removeItem(API_STORAGE_KEYS.geminiModel);
 
       const updated: ApiKeysConfig = {
         sarvamApiKey: trimmedSarvam,
-        geminiApiKey: trimmedGemini,
+        llmProvider,
+        llmApiKey: trimmedLlmKey,
+        llmModel: trimmedModel,
       };
       onSaved?.(updated);
       setSavedFeedback(true);
@@ -99,7 +166,7 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
       onClick={onClose}
     >
       <div
-        className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white shadow-xl"
+        className="max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -116,7 +183,7 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
                 API Configuration (Bring Your Own Key)
               </h2>
               <p className="text-xs text-slate-500">
-                Stored locally in your browser. Never uploaded to third-party servers.
+                Stored locally in your browser. Zero server-side key retention.
               </p>
             </div>
           </div>
@@ -132,7 +199,7 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
         </div>
 
         {/* Form */}
-        <form onSubmit={handleSave} className="space-y-5 px-5 py-5 sm:px-6">
+        <form onSubmit={handleSave} className="space-y-4 px-5 py-5 sm:px-6">
           {/* Sarvam AI Key */}
           <div>
             <label
@@ -166,44 +233,86 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
               </button>
             </div>
             <p className="mt-1 text-xs text-slate-500">
-              Used for multilingual Indian voice transcription.
+              Used for multilingual Indian voice transcription (saaras:v4).
             </p>
           </div>
 
-          {/* Gemini Key */}
+          {/* LLM Provider Dropdown */}
           <div>
             <label
-              htmlFor="gemini-api-key"
+              htmlFor="llm-provider"
               className="block text-sm font-medium text-slate-800"
             >
-              Gemini API Key (LLM)
+              LLM Provider
+            </label>
+            <select
+              id="llm-provider"
+              value={llmProvider}
+              onChange={(e) => handleProviderChange(e.target.value)}
+              className="mt-1.5 w-full rounded-xl border border-slate-300 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 focus:border-blue-600 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20"
+            >
+              {PROVIDER_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Dynamic LLM API Key */}
+          <div>
+            <label
+              htmlFor="llm-api-key"
+              className="block text-sm font-medium text-slate-800"
+            >
+              {activeProviderMeta.label} API Key
             </label>
             <div className="relative mt-1.5">
               <input
-                id="gemini-api-key"
-                type={showGeminiKey ? 'text' : 'password'}
-                value={geminiApiKey}
-                onChange={(e) => setGeminiApiKey(e.target.value)}
-                placeholder="Enter your Gemini API key"
+                id="llm-api-key"
+                type={showLlmKey ? 'text' : 'password'}
+                value={llmApiKey}
+                onChange={(e) => setLlmApiKey(e.target.value)}
+                placeholder={activeProviderMeta.keyPlaceholder}
                 autoComplete="off"
                 spellCheck={false}
                 className="w-full rounded-xl border border-slate-300 bg-slate-50 px-3.5 py-2.5 pr-11 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-600 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20"
               />
               <button
                 type="button"
-                onClick={() => setShowGeminiKey((prev) => !prev)}
-                aria-label={showGeminiKey ? 'Hide Gemini API Key' : 'Show Gemini API Key'}
+                onClick={() => setShowLlmKey((prev) => !prev)}
+                aria-label={showLlmKey ? 'Hide LLM API Key' : 'Show LLM API Key'}
                 className="absolute inset-y-0 right-0 flex items-center px-3 text-slate-500 hover:text-slate-700 focus:outline-none"
               >
-                {showGeminiKey ? (
+                {showLlmKey ? (
                   <EyeOff className="h-4 w-4" aria-hidden="true" />
                 ) : (
                   <Eye className="h-4 w-4" aria-hidden="true" />
                 )}
               </button>
             </div>
+          </div>
+
+          {/* Dynamic Model Name */}
+          <div>
+            <label
+              htmlFor="llm-model-name"
+              className="block text-sm font-medium text-slate-800"
+            >
+              Model Name
+            </label>
+            <input
+              id="llm-model-name"
+              type="text"
+              value={llmModel}
+              onChange={(e) => setLlmModel(e.target.value)}
+              placeholder={activeProviderMeta.modelPlaceholder}
+              autoComplete="off"
+              spellCheck={false}
+              className="mt-1.5 w-full rounded-xl border border-slate-300 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-600 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20"
+            />
             <p className="mt-1 text-xs text-slate-500">
-              Used to map facts to Bharatiya Nyaya Sanhita (BNS) provisions and draft petitions.
+              Used to map facts to BNS, IPC, and Special Acts and draft your FIR petition.
             </p>
           </div>
 
@@ -211,7 +320,7 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
           <div className="flex items-start gap-2.5 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
             <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-blue-700" aria-hidden="true" />
             <span>
-              Your keys remain in your browser&apos;s <code className="font-mono">localStorage</code> and can be cleared at any time.
+              Your keys remain in your browser&apos;s <code className="font-mono">localStorage</code> and exist only in server RAM during the request.
             </span>
           </div>
 

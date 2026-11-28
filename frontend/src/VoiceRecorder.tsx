@@ -201,13 +201,15 @@ export function VoiceRecorder({
       const extension = resolveAudioExtension(audioBlob.type || 'audio/webm');
       formData.append('audio', audioBlob, `recording.${extension}`);
 
-      const { sarvamKey, geminiKey, geminiModel } = loadStoredApiSettings();
-      formData.append('geminiModel', geminiModel);
+      const { sarvamKey, llmProvider, llmApiKey, llmModel } =
+        loadStoredApiSettings();
+      formData.append('llmProvider', llmProvider);
+      formData.append('llmModel', llmModel);
       if (sarvamKey) {
         formData.append('sarvamKey', sarvamKey);
       }
-      if (geminiKey) {
-        formData.append('geminiKey', geminiKey);
+      if (llmApiKey) {
+        formData.append('llmApiKey', llmApiKey);
       }
 
       try {

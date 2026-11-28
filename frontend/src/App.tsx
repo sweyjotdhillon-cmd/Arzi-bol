@@ -24,7 +24,7 @@ function ArziBolShell() {
   );
 
   const hasConfiguredKeys = Boolean(
-    apiKeys.sarvamApiKey.trim() && apiKeys.geminiApiKey.trim()
+    apiKeys.sarvamApiKey.trim() && apiKeys.llmApiKey.trim()
   );
 
   const handleTermsAgreed = () => {

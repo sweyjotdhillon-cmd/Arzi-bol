@@ -3,11 +3,45 @@ import { CheckCircle2, Eye, EyeOff, KeyRound, ShieldCheck, X } from 'lucide-reac
 import { useGlobalError } from './GlobalErrorState';
 import {
   API_STORAGE_KEYS,
-  DEFAULT_MODEL_BY_PROVIDER,
   loadStoredApiSettings,
   normalizeLlmProvider,
   type LlmProvider,
 } from '../utils/storage';
+
+const MODEL_REGISTRY = {
+  "Gemini": [
+    "gemini-1.5-flash",
+    "gemini-1.5-pro",
+    "gemini-2.0-flash-exp",
+    "Custom..."
+  ],
+  "OpenAI": [
+    "gpt-6.1-sol",
+    "gpt-6-astra",
+    "gpt-6.1-terra",
+    "gpt-6-luna",
+    "o1-preview",
+    "o1-mini",
+    "Custom..."
+  ],
+  "Anthropic": [
+    "claude-sonnet-5-5",
+    "claude-haiku-5-5",
+    "claude-opus-5-5",
+    "claude-fable-5-2",
+    "Custom..."
+  ],
+  "OpenRouter": [
+    "google/gemini-flash-1.5",
+    "anthropic/claude-3.5-sonnet",
+    "meta-llama/llama-3.1-8b-instruct",
+    "liquid/lfm-40b",
+    "Custom..."
+  ]
+} as const;
+
+type ModelRegistryKey = keyof typeof MODEL_REGISTRY;
+const CUSTOM_MODEL_OPTION = 'Custom...';
 
 export interface ApiKeysConfig {
   sarvamApiKey: string;
@@ -18,35 +52,56 @@ export interface ApiKeysConfig {
 
 const PROVIDER_OPTIONS: ReadonlyArray<{
   value: LlmProvider;
+  registryKey: ModelRegistryKey;
   label: string;
   keyPlaceholder: string;
   modelPlaceholder: string;
 }> = [
   {
     value: 'gemini',
+    registryKey: 'Gemini',
     label: 'Gemini',
     keyPlaceholder: 'Enter your Google Gemini API key',
-    modelPlaceholder: 'e.g. gemini-3.8-flash or gemini-1.5-pro',
+    modelPlaceholder: 'e.g. gemini-1.5-flash',
   },
   {
     value: 'openai',
+    registryKey: 'OpenAI',
     label: 'OpenAI',
     keyPlaceholder: 'Enter your OpenAI API key (sk-...)',
-    modelPlaceholder: 'e.g. gpt-4o',
+    modelPlaceholder: 'e.g. gpt-6.1-sol',
   },
   {
     value: 'anthropic',
+    registryKey: 'Anthropic',
     label: 'Anthropic (Claude)',
     keyPlaceholder: 'Enter your Anthropic API key (sk-ant-...)',
-    modelPlaceholder: 'e.g. claude-3-5-sonnet-20241022',
+    modelPlaceholder: 'e.g. claude-sonnet-5-5',
   },
   {
     value: 'openrouter',
+    registryKey: 'OpenRouter',
     label: 'OpenRouter',
     keyPlaceholder: 'Enter your OpenRouter API key (sk-or-...)',
     modelPlaceholder: 'e.g. google/gemini-flash-1.5',
   },
 ];
+
+function getProviderMeta(provider: LlmProvider) {
+  return (
+    PROVIDER_OPTIONS.find((opt) => opt.value === provider) ??
+    PROVIDER_OPTIONS[0]
+  );
+}
+
+function getModelsForProvider(provider: LlmProvider): readonly string[] {
+  return MODEL_REGISTRY[getProviderMeta(provider).registryKey];
+}
+
+function isPresetModel(provider: LlmProvider, model: string): boolean {
+  if (!model || model === CUSTOM_MODEL_OPTION) return false;
+  return getModelsForProvider(provider).includes(model);
+}
 
 export function loadStoredApiKeys(): ApiKeysConfig {
   const { sarvamKey, llmProvider, llmApiKey, llmModel } = loadStoredApiSettings();
@@ -69,7 +124,11 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
   const [sarvamApiKey, setSarvamApiKey] = useState('');
   const [llmProvider, setLlmProvider] = useState<LlmProvider>('gemini');
   const [llmApiKey, setLlmApiKey] = useState('');
-  const [llmModel, setLlmModel] = useState(DEFAULT_MODEL_BY_PROVIDER.gemini);
+  const [selectedModelOption, setSelectedModelOption] = useState<string>(
+    MODEL_REGISTRY.Gemini[0]
+  );
+  const [customModel, setCustomModel] = useState('');
+  const [modelError, setModelError] = useState<string | null>(null);
   const [showSarvamKey, setShowSarvamKey] = useState(false);
   const [showLlmKey, setShowLlmKey] = useState(false);
   const [savedFeedback, setSavedFeedback] = useState(false);
@@ -89,7 +148,20 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
     setSarvamApiKey(stored.sarvamApiKey);
     setLlmProvider(stored.llmProvider);
     setLlmApiKey(stored.llmApiKey);
-    setLlmModel(stored.llmModel);
+
+    const storedModel = stored.llmModel.trim();
+    const providerModels = getModelsForProvider(stored.llmProvider);
+    if (storedModel && isPresetModel(stored.llmProvider, storedModel)) {
+      setSelectedModelOption(storedModel);
+      setCustomModel('');
+    } else if (storedModel) {
+      setSelectedModelOption(CUSTOM_MODEL_OPTION);
+      setCustomModel(storedModel);
+    } else {
+      setSelectedModelOption(providerModels[0]);
+      setCustomModel('');
+    }
+    setModelError(null);
     setSavedFeedback(false);
   }, [isOpen]);
 
@@ -108,16 +180,24 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
     return null;
   }
 
-  const activeProviderMeta =
-    PROVIDER_OPTIONS.find((opt) => opt.value === llmProvider) ??
-    PROVIDER_OPTIONS[0];
+  const activeProviderMeta = getProviderMeta(llmProvider);
+  const activeModels = getModelsForProvider(llmProvider);
+  const isCustomModelSelected = selectedModelOption === CUSTOM_MODEL_OPTION;
 
   const handleProviderChange = (nextRaw: string) => {
     const nextProvider = normalizeLlmProvider(nextRaw);
-    const prevDefault = DEFAULT_MODEL_BY_PROVIDER[llmProvider];
+    const nextModels = getModelsForProvider(nextProvider);
     setLlmProvider(nextProvider);
-    if (!llmModel.trim() || llmModel.trim() === prevDefault) {
-      setLlmModel(DEFAULT_MODEL_BY_PROVIDER[nextProvider]);
+    setSelectedModelOption(nextModels[0]);
+    setCustomModel('');
+    setModelError(null);
+  };
+
+  const handleModelOptionChange = (nextModel: string) => {
+    setSelectedModelOption(nextModel);
+    setModelError(null);
+    if (nextModel !== CUSTOM_MODEL_OPTION) {
+      setCustomModel('');
     }
   };
 
@@ -125,8 +205,14 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
     event.preventDefault();
     const trimmedSarvam = sarvamApiKey.trim();
     const trimmedLlmKey = llmApiKey.trim();
-    const trimmedModel =
-      llmModel.trim() || DEFAULT_MODEL_BY_PROVIDER[llmProvider];
+    const resolvedModel = isCustomModelSelected
+      ? customModel.trim()
+      : selectedModelOption;
+
+    if (!resolvedModel) {
+      setModelError('Please enter a custom model name or select a preset model.');
+      return;
+    }
 
     try {
       if (trimmedSarvam) {
@@ -136,7 +222,7 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
       }
 
       window.localStorage.setItem(API_STORAGE_KEYS.llmProvider, llmProvider);
-      window.localStorage.setItem(API_STORAGE_KEYS.llmModel, trimmedModel);
+      window.localStorage.setItem(API_STORAGE_KEYS.llmModel, resolvedModel);
 
       if (trimmedLlmKey) {
         window.localStorage.setItem(API_STORAGE_KEYS.llmApiKey, trimmedLlmKey);
@@ -152,7 +238,7 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
         sarvamApiKey: trimmedSarvam,
         llmProvider,
         llmApiKey: trimmedLlmKey,
-        llmModel: trimmedModel,
+        llmModel: resolvedModel,
       };
       onSaved?.(updated);
       setSavedFeedback(true);
@@ -306,24 +392,55 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
             </div>
           </div>
 
-          {/* Dynamic Model Name */}
+          {/* Dynamic Model Selection */}
           <div>
             <label
-              htmlFor="llm-model-name"
+              htmlFor="llm-model-select"
               className="block text-sm font-medium text-slate-800"
             >
               Model Name
             </label>
-            <input
-              id="llm-model-name"
-              type="text"
-              value={llmModel}
-              onChange={(e) => setLlmModel(e.target.value)}
-              placeholder={activeProviderMeta.modelPlaceholder}
-              autoComplete="off"
-              spellCheck={false}
-              className="mt-1.5 w-full rounded-xl border border-slate-300 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-600 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20"
-            />
+            <select
+              id="llm-model-select"
+              value={selectedModelOption}
+              onChange={(e) => handleModelOptionChange(e.target.value)}
+              className="mt-1.5 w-full rounded-xl border border-slate-300 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 focus:border-blue-600 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20"
+            >
+              {activeModels.map((model) => (
+                <option key={model} value={model}>
+                  {model}
+                </option>
+              ))}
+            </select>
+
+            {isCustomModelSelected && (
+              <div className="mt-2">
+                <label htmlFor="llm-custom-model-name" className="sr-only">
+                  Custom Model Name
+                </label>
+                <input
+                  id="llm-custom-model-name"
+                  type="text"
+                  value={customModel}
+                  onChange={(e) => {
+                    setCustomModel(e.target.value);
+                    if (modelError) setModelError(null);
+                  }}
+                  placeholder={activeProviderMeta.modelPlaceholder}
+                  autoComplete="off"
+                  spellCheck={false}
+                  required
+                  className="w-full rounded-xl border border-slate-300 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-600 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20"
+                />
+              </div>
+            )}
+
+            {modelError && (
+              <p role="alert" className="mt-1 text-xs font-medium text-red-600">
+                {modelError}
+              </p>
+            )}
+
             <p className="mt-1 text-xs text-slate-500">
               Used to map facts to BNS, IPC, and Special Acts and draft your FIR petition.
             </p>

@@ -476,11 +476,19 @@ const handleHealth = (_req, res) => {
 app.get('/health', handleHealth);
 app.get('/api/health', handleHealth);
 
-app.post('/api/process-audio', rateLimitApi, upload.single('audio'), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No audio file uploaded.' });
-    }
+app.post(
+  '/api/process-audio',
+  rateLimitApi,
+  upload.fields([
+    { name: 'file', maxCount: 1 },
+    { name: 'audio', maxCount: 1 },
+  ]),
+  async (req, res) => {
+    let uploadedFile = req.files?.file?.[0] || req.files?.audio?.[0];
+    try {
+      if (!uploadedFile) {
+        return res.status(400).json({ error: 'No audio file uploaded.' });
+      }
 
     const requestSarvamKey =
       typeof req.body?.sarvamKey === 'string'
@@ -516,16 +524,16 @@ app.post('/api/process-audio', rateLimitApi, upload.single('audio'), async (req,
     }
 
     const { transcript, language } = await transcribeWithSarvam(
-      req.file.buffer,
-      req.file.originalname,
-      req.file.mimetype,
+      uploadedFile.buffer,
+      uploadedFile.originalname,
+      uploadedFile.mimetype,
       sarvamKey
     );
 
     // Release audio buffer immediately after transcription for zero-retention memory hygiene
-    if (req.file) {
-      req.file.buffer = null;
-      req.file = undefined;
+    if (uploadedFile) {
+      uploadedFile.buffer = null;
+      uploadedFile = undefined;
     }
 
     if (!transcript.trim()) {
@@ -558,9 +566,9 @@ app.post('/api/process-audio', rateLimitApi, upload.single('audio'), async (req,
         : 'An error occurred while processing your audio request.';
     return res.status(statusCode).json({ error: message });
   } finally {
-    if (req.file) {
-      req.file.buffer = null;
-      req.file = undefined;
+    if (uploadedFile) {
+      uploadedFile.buffer = null;
+      uploadedFile = undefined;
     }
   }
 });

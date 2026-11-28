@@ -145,7 +145,7 @@ export function HomePresentation({
     clearError();
     setIsProcessingExample(true);
 
-    const { geminiKey, geminiModel } = loadStoredApiSettings();
+    const { llmProvider, llmApiKey, llmModel } = loadStoredApiSettings();
 
     try {
       const response = await axios.post<LegalPetitionResult>(
@@ -153,8 +153,9 @@ export function HomePresentation({
         {
           text: example.text,
           language: example.language,
-          geminiModel,
-          ...(geminiKey ? { geminiKey } : {}),
+          llmProvider,
+          llmModel,
+          ...(llmApiKey ? { llmApiKey } : {}),
         },
         { timeout: 60000 }
       );

@@ -36,7 +36,7 @@ const API_PROCESS_AUDIO_PATH = '/api/process-audio';
 const WAV_PROCESSOR_BUFFER_SIZE = 4096;
 
 const DENIED_ERROR_MESSAGE =
-  'Microphone access blocked. Please check browser permissions or Brave Shields.';
+  'Microphone access blocked. Please check browser permissions (Brave Shields or Safari Privacy).';
 
 const INSECURE_CONTEXT_MESSAGE = 'Microphone requires HTTPS or localhost.';
 
@@ -477,12 +477,16 @@ export function VoiceRecorder({
 
       let stream: MediaStream;
       try {
+        if (audioContext.state === 'suspended') {
+          await audioContext.resume(); // CRITICAL for Safari/iOS
+        }
         stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       } catch (err: unknown) {
         teardownAudioGraph();
         if (!isMountedRef.current) return;
 
-        const errorName = err instanceof DOMException ? err.name : '';
+        const errorName =
+          err instanceof DOMException || err instanceof Error ? err.name : '';
 
         if (
           errorName === 'NotAllowedError' ||
@@ -498,10 +502,9 @@ export function VoiceRecorder({
           errorName === 'NotFoundError' ||
           errorName === 'DevicesNotFoundError'
         ) {
+          showError(DENIED_ERROR_MESSAGE);
           setRecorderState('error');
-          setErrorMessage(
-            'No microphone detected. Please connect a microphone and try again.'
-          );
+          setErrorMessage(DENIED_ERROR_MESSAGE);
           return;
         }
 
@@ -536,19 +539,6 @@ export function VoiceRecorder({
       }
 
       mediaStreamRef.current = stream;
-
-      try {
-        if (audioContext.state === 'suspended') {
-          await audioContext.resume();
-        }
-      } catch {
-        teardownAudioGraph();
-        setRecorderState('unsupported');
-        setErrorMessage(
-          'Could not initialize audio recorder on this browser. Please try an example below.'
-        );
-        return;
-      }
 
       if (!isMountedRef.current) {
         teardownAudioGraph();

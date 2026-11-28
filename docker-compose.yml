@@ -9,6 +9,8 @@ services:
       - SARVAM_API_KEY=${SARVAM_API_KEY:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - ALLOWED_ORIGIN=${ALLOWED_ORIGIN:-http://localhost:5173}
+    networks:
+      - arzibol-net
     restart: unless-stopped
 
   frontend:
@@ -24,4 +26,10 @@ services:
       - VITE_API_URL=/api
     depends_on:
       - worker
+    networks:
+      - arzibol-net
     restart: unless-stopped
+
+networks:
+  arzibol-net:
+    driver: bridge

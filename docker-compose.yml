@@ -3,6 +3,7 @@ services:
     build:
       context: ./worker
       dockerfile: Dockerfile
+    container_name: worker
     ports:
       - "8788:8788"
     environment:
@@ -10,7 +11,7 @@ services:
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - ALLOWED_ORIGIN=${ALLOWED_ORIGIN:-http://localhost:5173,http://127.0.0.1:5173}
     networks:
-      - arzibol-net
+      - arzibol_net
     restart: unless-stopped
 
   frontend:
@@ -24,13 +25,12 @@ services:
       - /app/node_modules
     environment:
       - VITE_API_URL=/api
-      - API_PROXY_TARGET=http://worker:8788
     depends_on:
       - worker
     networks:
-      - arzibol-net
+      - arzibol_net
     restart: unless-stopped
 
 networks:
-  arzibol-net:
+  arzibol_net:
     driver: bridge

@@ -36,7 +36,7 @@ const API_PROCESS_AUDIO_PATH = '/api/process-audio';
 const WAV_PROCESSOR_BUFFER_SIZE = 4096;
 
 const DENIED_ERROR_MESSAGE =
-  'Microphone access blocked. Please check browser permissions.';
+  'Microphone access blocked. Please check browser permissions or Brave Shields.';
 
 const INSECURE_CONTEXT_MESSAGE = 'Microphone requires HTTPS or localhost.';
 
@@ -310,8 +310,9 @@ export function VoiceRecorder({
 
       const { sarvamKey, llmProvider, llmApiKey, llmModel } =
         loadStoredApiSettings();
+      const finalizedModel = llmModel.trim();
       formData.append('llmProvider', llmProvider);
-      formData.append('llmModel', llmModel);
+      formData.append('llmModel', finalizedModel);
       if (sarvamKey) {
         formData.append('SARVAM_API_KEY', sarvamKey);
       }
@@ -456,12 +457,186 @@ export function VoiceRecorder({
     };
   }, [clearTimer, initialSupport.state, teardownAudioGraph]);
 
-  const startRecording = useCallback(async () => {
+  const startRecording = useCallback(
+    async (audioContext: AudioContext) => {
+      if (
+        disabled ||
+        recorderState === 'requesting' ||
+        recorderState === 'recording' ||
+        recorderState === 'processing'
+      ) {
+        return;
+      }
+
+      setRecorderState('requesting');
+      setRecordedBlob(null);
+      setErrorMessage(null);
+      clearError();
+      setSecondsRemaining(MAX_RECORDING_SECONDS);
+      pcmChannelChunksRef.current = [[]];
+
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (err: unknown) {
+        teardownAudioGraph();
+        if (!isMountedRef.current) return;
+
+        const errorName = err instanceof DOMException ? err.name : '';
+
+        if (
+          errorName === 'NotAllowedError' ||
+          errorName === 'PermissionDeniedError'
+        ) {
+          showError(DENIED_ERROR_MESSAGE);
+          setRecorderState('denied');
+          setErrorMessage(DENIED_ERROR_MESSAGE);
+          return;
+        }
+
+        if (
+          errorName === 'NotFoundError' ||
+          errorName === 'DevicesNotFoundError'
+        ) {
+          setRecorderState('error');
+          setErrorMessage(
+            'No microphone detected. Please connect a microphone and try again.'
+          );
+          return;
+        }
+
+        if (
+          errorName === 'NotReadableError' ||
+          errorName === 'TrackStartError'
+        ) {
+          setRecorderState('error');
+          setErrorMessage(
+            'Microphone is busy or unavailable. Close other apps using the mic and try again.'
+          );
+          return;
+        }
+
+        if (errorName === 'SecurityError') {
+          setRecorderState('unsupported');
+          setErrorMessage(INSECURE_CONTEXT_MESSAGE);
+          return;
+        }
+
+        setRecorderState('error');
+        setErrorMessage(
+          'Unable to access microphone. Please check your device settings or try an example below.'
+        );
+        return;
+      }
+
+      if (!isMountedRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        teardownAudioGraph();
+        return;
+      }
+
+      mediaStreamRef.current = stream;
+
+      try {
+        if (audioContext.state === 'suspended') {
+          await audioContext.resume();
+        }
+      } catch {
+        teardownAudioGraph();
+        setRecorderState('unsupported');
+        setErrorMessage(
+          'Could not initialize audio recorder on this browser. Please try an example below.'
+        );
+        return;
+      }
+
+      if (!isMountedRef.current) {
+        teardownAudioGraph();
+        return;
+      }
+
+      sampleRateRef.current = audioContext.sampleRate;
+
+      try {
+        const sourceNode = audioContext.createMediaStreamSource(stream);
+        const processorNode = audioContext.createScriptProcessor(
+          WAV_PROCESSOR_BUFFER_SIZE,
+          1,
+          1
+        );
+        const silentGainNode = audioContext.createGain();
+        silentGainNode.gain.value = 0;
+
+        sourceNodeRef.current = sourceNode;
+        processorNodeRef.current = processorNode;
+        gainNodeRef.current = silentGainNode;
+        pcmChannelChunksRef.current = [[]];
+        isRecordingRef.current = true;
+
+        processorNode.onaudioprocess = (event: AudioProcessingEvent) => {
+          if (!isRecordingRef.current) return;
+          const inputData = event.inputBuffer.getChannelData(0);
+          // Copy samples out of the reusable Web Audio buffer
+          pcmChannelChunksRef.current[0].push(new Float32Array(inputData));
+        };
+
+        // Handle external hardware disconnect or OS audio interruption (e.g., iOS call)
+        stream.getAudioTracks().forEach((track) => {
+          track.onended = () => {
+            if (isRecordingRef.current) {
+              stopRecording();
+            }
+          };
+        });
+
+        sourceNode.connect(processorNode);
+        processorNode.connect(silentGainNode);
+        silentGainNode.connect(audioContext.destination);
+      } catch {
+        teardownAudioGraph();
+        setRecorderState('error');
+        setErrorMessage('Failed to start audio recording. Please try again.');
+        return;
+      }
+
+      recordingStartedAtRef.current = Date.now();
+      setRecorderState('recording');
+      setSecondsRemaining(MAX_RECORDING_SECONDS);
+
+      timerIntervalRef.current = window.setInterval(() => {
+        const startedAt = recordingStartedAtRef.current;
+        if (startedAt === null) return;
+
+        const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
+        const remaining = Math.max(0, MAX_RECORDING_SECONDS - elapsedSeconds);
+        setSecondsRemaining(remaining);
+
+        if (remaining <= 0) {
+          stopRecording();
+        }
+      }, 250);
+    },
+    [
+      clearError,
+      disabled,
+      recorderState,
+      showError,
+      stopRecording,
+      teardownAudioGraph,
+    ]
+  );
+
+  const handleMainButtonClick = async () => {
+    if (disabled) return;
+    if (recorderState === 'recording') {
+      stopRecording();
+      return;
+    }
+
     if (
-      disabled ||
-      recorderState === 'requesting' ||
-      recorderState === 'recording' ||
-      recorderState === 'processing'
+      recorderState !== 'idle' &&
+      recorderState !== 'error' &&
+      recorderState !== 'denied'
     ) {
       return;
     }
@@ -487,20 +662,13 @@ export function VoiceRecorder({
       return;
     }
 
-    setRecorderState('requesting');
-    setRecordedBlob(null);
-    setErrorMessage(null);
-    clearError();
-    setSecondsRemaining(MAX_RECORDING_SECONDS);
-    pcmChannelChunksRef.current = [[]];
-
-    // Safari (macOS/iOS) requires AudioContext creation & resume() inside the
-    // synchronous user-gesture call stack before awaiting getUserMedia().
+    // iOS/Safari Fix: AudioContext starts in 'suspended' state on iOS and must
+    // be explicitly resumed inside the exact onClick handler before getUserMedia.
     let audioContext: AudioContext;
     try {
       audioContext = new AudioContextCtor();
       if (audioContext.state === 'suspended') {
-        void audioContext.resume().catch(() => {});
+        await audioContext.resume();
       }
       audioContextRef.current = audioContext;
     } catch {
@@ -512,165 +680,7 @@ export function VoiceRecorder({
       return;
     }
 
-    let stream: MediaStream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (err: unknown) {
-      teardownAudioGraph();
-      if (!isMountedRef.current) return;
-
-      const errorName = err instanceof DOMException ? err.name : '';
-
-      if (
-        errorName === 'NotAllowedError' ||
-        errorName === 'PermissionDeniedError'
-      ) {
-        setRecorderState('denied');
-        setErrorMessage(DENIED_ERROR_MESSAGE);
-        return;
-      }
-
-      if (
-        errorName === 'NotFoundError' ||
-        errorName === 'DevicesNotFoundError'
-      ) {
-        setRecorderState('error');
-        setErrorMessage(
-          'No microphone detected. Please connect a microphone and try again.'
-        );
-        return;
-      }
-
-      if (
-        errorName === 'NotReadableError' ||
-        errorName === 'TrackStartError'
-      ) {
-        setRecorderState('error');
-        setErrorMessage(
-          'Microphone is busy or unavailable. Close other apps using the mic and try again.'
-        );
-        return;
-      }
-
-      if (errorName === 'SecurityError') {
-        setRecorderState('unsupported');
-        setErrorMessage(INSECURE_CONTEXT_MESSAGE);
-        return;
-      }
-
-      setRecorderState('error');
-      setErrorMessage(
-        'Unable to access microphone. Please check your device settings or try an example below.'
-      );
-      return;
-    }
-
-    if (!isMountedRef.current) {
-      stream.getTracks().forEach((track) => track.stop());
-      teardownAudioGraph();
-      return;
-    }
-
-    mediaStreamRef.current = stream;
-
-    try {
-      if (audioContext.state === 'suspended') {
-        await audioContext.resume();
-      }
-    } catch {
-      teardownAudioGraph();
-      setRecorderState('unsupported');
-      setErrorMessage(
-        'Could not initialize audio recorder on this browser. Please try an example below.'
-      );
-      return;
-    }
-
-    if (!isMountedRef.current) {
-      teardownAudioGraph();
-      return;
-    }
-
-    sampleRateRef.current = audioContext.sampleRate;
-
-    try {
-      const sourceNode = audioContext.createMediaStreamSource(stream);
-      const processorNode = audioContext.createScriptProcessor(
-        WAV_PROCESSOR_BUFFER_SIZE,
-        1,
-        1
-      );
-      const silentGainNode = audioContext.createGain();
-      silentGainNode.gain.value = 0;
-
-      sourceNodeRef.current = sourceNode;
-      processorNodeRef.current = processorNode;
-      gainNodeRef.current = silentGainNode;
-      pcmChannelChunksRef.current = [[]];
-      isRecordingRef.current = true;
-
-      processorNode.onaudioprocess = (event: AudioProcessingEvent) => {
-        if (!isRecordingRef.current) return;
-        const inputData = event.inputBuffer.getChannelData(0);
-        // Copy samples out of the reusable Web Audio buffer
-        pcmChannelChunksRef.current[0].push(new Float32Array(inputData));
-      };
-
-      // Handle external hardware disconnect or OS audio interruption (e.g., iOS call)
-      stream.getAudioTracks().forEach((track) => {
-        track.onended = () => {
-          if (isRecordingRef.current) {
-            stopRecording();
-          }
-        };
-      });
-
-      sourceNode.connect(processorNode);
-      processorNode.connect(silentGainNode);
-      silentGainNode.connect(audioContext.destination);
-    } catch {
-      teardownAudioGraph();
-      setRecorderState('error');
-      setErrorMessage('Failed to start audio recording. Please try again.');
-      return;
-    }
-
-    recordingStartedAtRef.current = Date.now();
-    setRecorderState('recording');
-    setSecondsRemaining(MAX_RECORDING_SECONDS);
-
-    timerIntervalRef.current = window.setInterval(() => {
-      const startedAt = recordingStartedAtRef.current;
-      if (startedAt === null) return;
-
-      const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
-      const remaining = Math.max(0, MAX_RECORDING_SECONDS - elapsedSeconds);
-      setSecondsRemaining(remaining);
-
-      if (remaining <= 0) {
-        stopRecording();
-      }
-    }, 250);
-  }, [
-    clearError,
-    disabled,
-    recorderState,
-    stopRecording,
-    stopStreamTracks,
-    teardownAudioGraph,
-  ]);
-
-  const handleMainButtonClick = () => {
-    if (disabled) return;
-    if (recorderState === 'recording') {
-      stopRecording();
-    } else if (
-      recorderState === 'idle' ||
-      recorderState === 'error' ||
-      recorderState === 'denied'
-    ) {
-      void startRecording();
-    }
+    await startRecording(audioContext);
   };
 
   const handleExampleClick = (example: ExamplePrompt) => {
@@ -891,7 +901,7 @@ export function VoiceRecorder({
               {(isDenied || (isError && !recordedBlob)) && (
                 <button
                   type="button"
-                  onClick={() => void startRecording()}
+                  onClick={handleMainButtonClick}
                   className="mt-3 inline-flex items-center gap-1.5 rounded-xl bg-red-600 px-3.5 py-2 text-xs font-semibold text-white shadow-xs transition hover:bg-red-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 focus-visible:ring-offset-1"
                 >
                   <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />

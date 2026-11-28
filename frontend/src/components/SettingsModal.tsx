@@ -205,12 +205,16 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
     event.preventDefault();
     const trimmedSarvam = sarvamApiKey.trim();
     const trimmedLlmKey = llmApiKey.trim();
+    const sanitizedCustomModel = customModel.replace(/[\r\n\t\0]/g, '').trim();
     const resolvedModel = isCustomModelSelected
-      ? customModel.trim()
-      : selectedModelOption;
+      ? sanitizedCustomModel
+      : selectedModelOption.trim();
 
-    if (!resolvedModel) {
-      setModelError('Please enter a custom model name or select a preset model.');
+    if (!resolvedModel || resolvedModel === CUSTOM_MODEL_OPTION) {
+      const errorMsg =
+        'Please enter a custom model name or select a preset model.';
+      setModelError(errorMsg);
+      showError(errorMsg);
       return;
     }
 
@@ -429,7 +433,6 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
                   placeholder={activeProviderMeta.modelPlaceholder}
                   autoComplete="off"
                   spellCheck={false}
-                  required
                   className="w-full rounded-xl border border-slate-300 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-600 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20"
                 />
               </div>

@@ -36,7 +36,7 @@ const API_PROCESS_AUDIO_PATH = '/api/process-audio';
 const WAV_PROCESSOR_BUFFER_SIZE = 4096;
 
 const DENIED_ERROR_MESSAGE =
-  'Microphone access blocked. Please disable Brave Shields or grant browser permissions.';
+  'Microphone blocked. Please grant permissions or disable privacy shields (e.g., Brave Shields).';
 
 const INSECURE_CONTEXT_MESSAGE = 'Microphone requires HTTPS or localhost.';
 
@@ -497,7 +497,8 @@ export function VoiceRecorder({
           errorName === 'NotAllowedError' ||
           errorName === 'PermissionDeniedError' ||
           errorName === 'NotFoundError' ||
-          errorName === 'DevicesNotFoundError'
+          errorName === 'DevicesNotFoundError' ||
+          errorName === 'SecurityError'
         ) {
           showError(DENIED_ERROR_MESSAGE);
           setRecorderState('denied');
@@ -513,12 +514,6 @@ export function VoiceRecorder({
           setErrorMessage(
             'Microphone is busy or unavailable. Close other apps using the mic and try again.'
           );
-          return;
-        }
-
-        if (errorName === 'SecurityError') {
-          setRecorderState('unsupported');
-          setErrorMessage(INSECURE_CONTEXT_MESSAGE);
           return;
         }
 

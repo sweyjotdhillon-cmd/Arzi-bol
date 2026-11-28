@@ -24,6 +24,14 @@ export function maskErrorMessage(error: unknown, fallback?: string): string {
   const normalized = raw.toLowerCase();
 
   if (
+    normalized.includes('microphone blocked') ||
+    normalized.includes('brave shields') ||
+    normalized.includes('privacy shields')
+  ) {
+    return raw.trim();
+  }
+
+  if (
     normalized.includes('notallowederror') ||
     normalized.includes('permission denied') ||
     normalized.includes('microphone')

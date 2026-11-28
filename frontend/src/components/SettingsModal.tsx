@@ -133,6 +133,8 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
   const [showLlmKey, setShowLlmKey] = useState(false);
   const [savedFeedback, setSavedFeedback] = useState(false);
   const closeTimeoutRef = useRef<number | null>(null);
+  const customModelInputRef = useRef<HTMLInputElement | null>(null);
+  const previousProviderRef = useRef<LlmProvider | null>(null);
 
   useEffect(() => {
     return () => {
@@ -150,6 +152,7 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
     }
 
     const stored = loadStoredApiKeys();
+    previousProviderRef.current = stored.llmProvider;
     setSarvamApiKey(stored.sarvamApiKey);
     setLlmProvider(stored.llmProvider);
     setLlmApiKey(stored.llmApiKey);
@@ -169,6 +172,24 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
     setModelError(null);
     setSavedFeedback(false);
   }, [isOpen]);
+
+  // Listener: when selectedProvider changes, forcefully reset model dropdown
+  // to the first default model of the new provider and wipe customModelText
+  useEffect(() => {
+    if (!isOpen) return;
+    if (previousProviderRef.current === null) {
+      previousProviderRef.current = llmProvider;
+      return;
+    }
+    if (previousProviderRef.current !== llmProvider) {
+      previousProviderRef.current = llmProvider;
+      const defaultModels = getModelsForProvider(llmProvider);
+      setSelectedModelOption(defaultModels[0]);
+      setCustomModelText('');
+      setModelError(null);
+      setSavedFeedback(false);
+    }
+  }, [isOpen, llmProvider]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -216,6 +237,16 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
     const sanitizedCustomModel = customModelText
       .replace(/[\r\n\t\0]/g, '')
       .trim();
+
+    if (isCustomModelSelected && !sanitizedCustomModel) {
+      const errorMsg =
+        'Custom model name cannot be blank. Please enter a valid model identifier.';
+      setModelError(errorMsg);
+      showError(errorMsg);
+      customModelInputRef.current?.focus();
+      return;
+    }
+
     const resolvedModel = isCustomModelSelected
       ? sanitizedCustomModel
       : selectedModelOption.trim();
@@ -433,6 +464,7 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
                   Custom Model Name
                 </label>
                 <input
+                  ref={customModelInputRef}
                   id="llm-custom-model-name"
                   type="text"
                   value={customModelText}
